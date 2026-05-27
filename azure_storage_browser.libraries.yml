@@ -1,0 +1,5 @@
+styles:
+  version: VERSION
+  css:
+    component:
+      css/azure_storage_browser.css: {}

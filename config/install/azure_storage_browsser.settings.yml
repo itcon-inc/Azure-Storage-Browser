@@ -1,0 +1,9 @@
+azure_account_name: ''
+azure_account_key: ''
+azure_container_name: ''
+azure_blob_prefix: ''
+sas_token_expiry_minutes: 60
+page_title: 'Available Files'
+show_file_size: true
+show_last_modified: true
+allowed_extensions: 'bak,sql,zip,gz,tar'

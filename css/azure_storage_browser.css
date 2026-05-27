@@ -1,0 +1,25 @@
+/**
+ * @file
+ * Styles for the Azure Storage Browser module.
+ */
+
+.azure-storage-browser__table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.azure-storage-browser__table th,
+.azure-storage-browser__table td {
+  padding: 0.5em 1em;
+  text-align: left;
+  border-bottom: 1px solid #ddd;
+}
+
+.azure-storage-browser__table th {
+  background-color: #f5f5f5;
+  font-weight: bold;
+}
+
+.azure-storage-browser__table tr:hover td {
+  background-color: #fafafa;
+}

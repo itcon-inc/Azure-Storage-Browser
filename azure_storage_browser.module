@@ -1,0 +1,29 @@
+<?php
+
+/**
+ * @file
+ * Azure Storage Browser module hooks.
+ */
+
+declare(strict_types=1);
+
+use Drupal\Core\Routing\RouteMatchInterface;
+
+/**
+ * Implements hook_help().
+ */
+function azure_storage_browser_help(string $route_name, RouteMatchInterface $route_match): string {
+  return match ($route_name) {
+    'help.page.azure_storage_browser' => (string) t(
+      '<p>The <strong>Azure Storage Browser</strong> module lists blobs in an Azure Blob Storage
+       container as downloadable links. Downloads are served via time-limited Shared Access
+       Signature (SAS) URLs so the storage account key is never exposed to end-users.</p>
+       <p>Configure the storage account credentials and container at
+       <a href=":settings">Administration → Configuration → Services → Azure Storage Browser</a>.
+       Grant the <em>Access Azure Storage Browser</em> permission to roles that should see the
+       file list, and <em>Administer Azure Storage Browser</em> to roles that can change settings.</p>',
+      [':settings' => \Drupal\Core\Url::fromRoute('azure_storage_browser.settings')->toString()]
+    ),
+    default => '',
+  };
+}

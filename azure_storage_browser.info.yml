@@ -1,0 +1,8 @@
+name: 'Azure File Browser'
+type: module
+description: 'Displays a list of Azure Blob Storage files (e.g. database backups) as downloadable links, with configurable credentials and access permissions.'
+package: 'Custom'
+core_version_requirement: ^11
+php: '>=8.4'
+dependencies:
+  - drupal:system

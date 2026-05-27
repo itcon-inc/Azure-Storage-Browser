@@ -1,0 +1,31 @@
+azure_storage_browser.settings:
+  type: config_object
+  label: 'Azure Storage Browser settings'
+  mapping:
+    azure_account_name:
+      type: string
+      label: 'Azure Storage Account Name'
+    azure_account_key:
+      type: string
+      label: 'Azure Storage Account Key'
+    azure_container_name:
+      type: string
+      label: 'Azure Blob Container Name'
+    azure_blob_prefix:
+      type: string
+      label: 'Blob Name Prefix (virtual directory filter)'
+    sas_token_expiry_minutes:
+      type: integer
+      label: 'SAS Token Expiry (minutes)'
+    page_title:
+      type: label
+      label: 'Page Title'
+    show_file_size:
+      type: boolean
+      label: 'Show file size column'
+    show_last_modified:
+      type: boolean
+      label: 'Show last modified column'
+    allowed_extensions:
+      type: string
+      label: 'Allowed file extensions (comma-separated)'

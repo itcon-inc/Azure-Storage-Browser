@@ -1,0 +1,13 @@
+azure_storage_browser.list:
+  title: 'Azure Storage Browser'
+  description: 'Browse and download files from Azure Blob Storage.'
+  route_name: azure_storage_browser.list
+  parent: system.admin
+  weight: 50
+
+azure_storage_browser.settings:
+  title: 'Azure Storage Browser'
+  description: 'Configure Azure Blob Storage credentials and container settings.'
+  route_name: azure_storage_browser.settings
+  parent: system.admin_config_services
+  weight: 50
