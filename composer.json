@@ -1,0 +1,13 @@
+{
+    "name": "drupal/azure_storage_browser",
+    "type": "drupal-module",
+    "description": "Browse and download File objects from Azure Storage.",
+    "keywords": ["Drupal", "azure", "azure-storage-browser"],
+    "license": "proprietary",
+    "authors": [
+      {
+        "name": "Team",
+        "email": "email@email"
+      }
+    ],
+}
