@@ -15,9 +15,9 @@ use Symfony\Component\HttpKernel\Exception\AccessDeniedHttpException;
 use Symfony\Component\HttpKernel\Exception\NotFoundHttpException;
 
 /**
- * Controller for the Azure File Browser pages.
+ * Controller for the Azure Storage Browser pages.
  */
-final class AzureFileBrowserController extends ControllerBase {
+final class AzureStorageBrowserController extends ControllerBase {
 
   public function __construct(
     private readonly AzureBlobStorageService $azureService,

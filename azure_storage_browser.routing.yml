@@ -1,7 +1,7 @@
 azure_storage_browser.list:
   path: '/admin/azure-storage'
   defaults:
-    _controller: '\Drupal\azure_storage_browser\Controller\AzureFileBrowserController::listFiles'
+    _controller: '\Drupal\azure_storage_browser\Controller\AzureStorageBrowserController::listFiles'
     _title: 'Azure Storage Browser'
   requirements:
     _permission: 'access azure storage browser'
@@ -10,7 +10,7 @@ azure_storage_browser.download:
   path: '/admin/azure-storage/download/{blob}'
   defaults:
     _controller: '\Drupal\azure_storage_browser\Controller\AzureStorageBrowserController::downloadFile'
-    _title: 'Download Azure File'
+    _title: 'Download Azure Object'
   requirements:
     _permission: 'access azure storage browser'
   options:
@@ -20,7 +20,7 @@ azure_storage_browser.download:
 azure_storage_browser.settings:
   path: '/admin/config/azure-storage-browser'
   defaults:
-    _form: '\Drupal\azure_storage_browser\Form\AzureFileBrowserSettingsForm'
+    _form: '\Drupal\azure_storage_browser\Form\AzureStorageBrowserSettingsForm'
     _title: 'Azure Storage Browser Settings'
   requirements:
     _permission: 'administer azure storage browser'

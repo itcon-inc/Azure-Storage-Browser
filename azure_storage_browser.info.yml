@@ -1,4 +1,4 @@
-name: 'Azure File Browser'
+name: 'Azure Storage Browser'
 type: module
 description: 'Displays a list of Azure Blob Storage files (e.g. database backups) as downloadable links, with configurable credentials and access permissions.'
 package: 'Custom'

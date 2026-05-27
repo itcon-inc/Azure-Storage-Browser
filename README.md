@@ -45,7 +45,7 @@ drush cr
 
 ## Configuration
 
-Navigate to **Administration → Configuration → Services → Azure File Browser**
+Navigate to **Administration → Configuration → Services → Azure Storage Browser**
 (`/admin/config/azure-storage-browser`).
 
 ### Required settings
@@ -84,8 +84,8 @@ $config['azure_storage_browser.settings']['azure_container_name'] = 'db-backups'
 
 | Permission | Machine name | Purpose |
 |---|---|---|
-| Access Azure File Browser | `access azure storage browser` | View the file list and generate download links |
-| Administer Azure File Browser | `administer azure storage browser` | Change credentials and settings |
+| Access Azure Storage Browser | `access azure storage browser` | View the file list and generate download links |
+| Administer Azure Storage Browser | `administer azure storage browser` | Change credentials and settings |
 
 Grant these at **Administration → People → Permissions** (`/admin/people/permissions`).
 

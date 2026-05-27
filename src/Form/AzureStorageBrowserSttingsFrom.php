@@ -8,9 +8,9 @@ use Drupal\Core\Form\ConfigFormBase;
 use Drupal\Core\Form\FormStateInterface;
 
 /**
- * Configuration form for Azure File Browser.
+ * Configuration form for Azure Storage Browser.
  */
-final class AzureFileBrowserSettingsForm extends ConfigFormBase {
+final class AzureStorageBrowserSettingsForm extends ConfigFormBase {
 
   /**
    * {@inheritdoc}

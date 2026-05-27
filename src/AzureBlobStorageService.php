@@ -185,7 +185,7 @@ final class AzureBlobStorageService {
 
     if ($account === '' || $key === '' || $container === '') {
       throw new \RuntimeException(
-        'Azure File Browser is not fully configured. '
+        'Azure Storage Browser is not fully configured. '
         . 'Please set the account name, account key, and container name.'
       );
     }
