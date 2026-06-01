@@ -1,8 +1,9 @@
 name: 'Azure Storage Browser'
-type: module
 description: 'Displays a list of Azure Blob Storage files (e.g. database backups) as downloadable links, with configurable credentials and access permissions.'
 package: 'Custom'
+type: module
 core_version_requirement: ^11
+configure: azure_storage_browser.settings
 php: '>=8.4'
 dependencies:
   - drupal:system

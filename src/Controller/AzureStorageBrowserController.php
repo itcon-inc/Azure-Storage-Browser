@@ -17,12 +17,23 @@ use Symfony\Component\HttpKernel\Exception\NotFoundHttpException;
 /**
  * Controller for the Azure Storage Browser pages.
  */
-final class AzureStorageBrowserController extends ControllerBase {
+class AzureStorageBrowserController extends ControllerBase {
 
+  /**
+   * Constructs an AzureStorageBrowserController object.
+   *
+   * @param \Drupal\storage_brwoser\AzureBlobStorageService $azureService
+   *   The module handler.
+   * @param \Drupal\Core\Config\ConfigFactoryInterface $configFactory
+   *   The config factory.
+   */
   public function __construct(
-    private readonly AzureBlobStorageService $azureService,
-    private readonly ConfigFactoryInterface $configFactory,
-  ) {}
+    AzureBlobStorageService $azureService,
+    ConfigFactoryInterface $configFactory,
+  ) {
+    $this->azureService = $azureService;
+    $this->settings = $configFactory->get('azure_storage_browser.settings');
+  }
 
   /**
    * {@inheritdoc}
@@ -42,7 +53,7 @@ final class AzureStorageBrowserController extends ControllerBase {
    * Renders the file listing page.
    */
   public function listFiles(): array {
-    $config         = $this->configFactory->get('azure_storage_browser.settings');
+    $config         = $this->settings;
     $showSize       = (bool) $config->get('show_file_size');
     $showModified   = (bool) $config->get('show_last_modified');
     $rawExtensions  = (string) ($config->get('allowed_extensions') ?? '');

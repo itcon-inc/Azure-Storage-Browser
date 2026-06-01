@@ -1,3 +1,11 @@
+azure_storage_browser.settings:
+  path: '/admin/config/azure-storage-browser'
+  defaults:
+    _form: '\Drupal\azure_storage_browser\Form\AzureStorageBrowserSettingsForm'
+    _title: 'Azure Storage Browser Settings'
+  requirements:
+    _permission: 'administer azure storage browser'
+
 azure_storage_browser.list:
   path: '/admin/azure-storage'
   defaults:
@@ -14,13 +22,4 @@ azure_storage_browser.download:
   requirements:
     _permission: 'access azure storage browser'
   options:
-    # blob names may contain slashes (virtual directories)
     utf8: true
-
-azure_storage_browser.settings:
-  path: '/admin/config/azure-storage-browser'
-  defaults:
-    _form: '\Drupal\azure_storage_browser\Form\AzureStorageBrowserSettingsForm'
-    _title: 'Azure Storage Browser Settings'
-  requirements:
-    _permission: 'administer azure storage browser'
