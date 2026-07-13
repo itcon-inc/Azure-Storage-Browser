@@ -19,6 +19,9 @@ use Symfony\Component\HttpKernel\Exception\NotFoundHttpException;
  */
 class AzureStorageBrowserController extends ControllerBase {
 
+  public $azureService;
+  public $settings;
+
   /**
    * Constructs an AzureStorageBrowserController object.
    *

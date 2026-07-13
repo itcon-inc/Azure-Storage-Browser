@@ -4,15 +4,13 @@ declare(strict_types=1);
 
 namespace Drupal\azure_storage_browser\Form;
 
+use Drupal\Core\Config\ConfigFactoryInterface;
 use Drupal\Core\Form\ConfigFormBase;
 use Drupal\Core\Form\FormStateInterface;
-use Drupal\Core\StringTranslation\TranslatableMarkup;
 use Symfony\Component\DependencyInjection\ContainerInterface;
 
 /**
- * Class AzureStorageBrowserSettingsForm. The config form for the admin_toolbar module.
- *
- * @package Drupal\azure_storage_browser\Form
+ * Configuration form for Azure Storage Browser.
  */
 class AzureStorageBrowserSettingsForm extends ConfigFormBase {
 
@@ -28,6 +26,13 @@ class AzureStorageBrowserSettingsForm extends ConfigFormBase {
    */
   protected function getEditableConfigNames(): array {
     return ['azure_storage_browser.settings'];
+  }
+
+    protected function isOverridden(string $key): bool {
+    $editable = $this->config('azure_storage_browser.settings');
+    $withOverrides = $this->configFactory()->get('azure_storage_browser.settings');
+
+    return $withOverrides->get($key) !== $editable->getOriginal($key, FALSE);
   }
 
   /**
@@ -59,7 +64,7 @@ class AzureStorageBrowserSettingsForm extends ConfigFormBase {
         . 'Leave blank to keep the existing key. '
         . 'Store this in <code>settings.php</code> via config overrides for production.'
       ),
-      '#default_value' => '',
+      '#default_value' => $config->get('azure_account_key'),
       '#maxlength' => 512,
       '#attributes' => ['autocomplete' => 'off'],
     ];
@@ -74,27 +79,28 @@ class AzureStorageBrowserSettingsForm extends ConfigFormBase {
 
     $form['azure_storage'] = [
       '#type' => 'details',
-      '#title' => $this->t('Container & Filtering'),
+      '#title' => $this->t('File Share & Filtering'),
       '#open' => TRUE,
     ];
 
-    $form['azure_storage']['azure_container_name'] = [
+    $form['azure_storage']['azure_share_name'] = [
       '#type' => 'textfield',
-      '#title' => $this->t('Container Name'),
-      '#description' => $this->t('The name of the Azure Blob Storage container to list files from.'),
-      '#default_value' => $config->get('azure_container_name'),
+      '#title' => $this->t('File Share Name'),
+      '#description' => $this->t('The name of the Azure Files (classic file share) to list files from.'),
+      '#default_value' => $config->get('azure_share_name'),
       '#required' => TRUE,
       '#maxlength' => 63,
     ];
 
-    $form['azure_storage']['azure_blob_prefix'] = [
+    $form['azure_storage']['azure_directory_path'] = [
       '#type' => 'textfield',
-      '#title' => $this->t('Blob Prefix (optional)'),
+      '#title' => $this->t('Directory Path (optional)'),
       '#description' => $this->t(
-        'Only list blobs whose names begin with this prefix. '
-        . 'Use this to scope the listing to a virtual directory, e.g. <code>backups/</code>.'
+        'Only list files under this directory path within the share. '
+        . 'Subdirectories are listed recursively. Leave blank to list the entire share, '
+        . 'e.g. <code>backups/production</code>.'
       ),
-      '#default_value' => $config->get('azure_blob_prefix'),
+      '#default_value' => $config->get('azure_directory_path'),
       '#maxlength' => 1024,
     ];
 
@@ -103,7 +109,7 @@ class AzureStorageBrowserSettingsForm extends ConfigFormBase {
       '#title' => $this->t('Allowed File Extensions'),
       '#description' => $this->t(
         'Comma-separated list of extensions to display (e.g. <code>bak,sql,zip,gz</code>). '
-        . 'Leave blank to show all blobs.'
+        . 'Leave blank to show all files.'
       ),
       '#default_value' => $config->get('allowed_extensions'),
       '#maxlength' => 512,
@@ -154,14 +160,56 @@ class AzureStorageBrowserSettingsForm extends ConfigFormBase {
       '#default_value' => $config->get('show_last_modified') ?? TRUE,
     ];
 
+    $this->disableOverriddenFields($form);
+
     return parent::buildForm($form, $form_state);
   }
 
+  protected function disableOverriddenFields(array &$form): void {
+    $overriddenConfig = $this->configFactory()->get('azure_storage_browser.settings');
+
+    $map = [
+      'azure_account_name' => ['azure_credentials', 'azure_account_name'],
+      'azure_account_key' => ['azure_credentials', 'azure_account_key'],
+      'azure_share_name' => ['azure_storage', 'azure_share_name'],
+      'azure_directory_path' => ['azure_storage', 'azure_directory_path'],
+      'allowed_extensions' => ['azure_storage', 'allowed_extensions'],
+      'sas_token_expiry_minutes' => ['download', 'sas_token_expiry_minutes'],
+      'page_title' => ['display', 'page_title'],
+      'show_file_size' => ['display', 'show_file_size'],
+      'show_last_modified' => ['display', 'show_last_modified'],
+    ];
+
+    foreach ($map as $key => [$group, $element]) {
+      if (!isset($form[$group][$element]) || !$this->isOverridden($key)) {
+        continue;
+      }
+
+      $form[$group][$element]['#disabled'] = TRUE;
+      $override_notice = $this->t('This value is set in settings.php and cannot be changed here.');
+
+      if ($key == 'azure_account_key') {
+        $form[$group][$element]['#default_value'] = $key;
+      }
+      else {
+        $form[$group][$element]['#default_value'] = $overriddenConfig->get($key);
+      }
+
+      $existing = $form[$group][$element]['#description'] ?? NULL;
+      $form[$group][$element]['#description'] = $existing
+        ? $this->t('@existing<br><strong>@notice</strong>', ['@existing' => $existing, '@notice' => $override_notice])
+        : $this->t('<strong>@notice</strong>', ['@notice'=> $override_notice]);
+    }
+  }
   /**
    * {@inheritdoc}
    */
   public function validateForm(array &$form, FormStateInterface $form_state): void {
     parent::validateForm($form, $form_state);
+
+    if (isset($this->isOverridden['sas_token_expiry_minutes'])) {
+      return;
+    }
 
     $expiry = (int) $form_state->getValue('sas_token_expiry_minutes');
     if ($expiry < 1 || $expiry > 10080) {
@@ -178,19 +226,24 @@ class AzureStorageBrowserSettingsForm extends ConfigFormBase {
   public function submitForm(array &$form, FormStateInterface $form_state): void {
     $config = $this->config('azure_storage_browser.settings');
 
-    $config
-      ->set('azure_account_name', trim($form_state->getValue('azure_account_name')))
-      ->set('azure_container_name', trim($form_state->getValue('azure_container_name')))
-      ->set('azure_blob_prefix', trim($form_state->getValue('azure_blob_prefix')))
-      ->set('allowed_extensions', trim($form_state->getValue('allowed_extensions')))
-      ->set('sas_token_expiry_minutes', (int) $form_state->getValue('sas_token_expiry_minutes'))
-      ->set('page_title', trim($form_state->getValue('page_title')))
-      ->set('show_file_size', (bool) $form_state->getValue('show_file_size'))
-      ->set('show_last_modified', (bool) $form_state->getValue('show_last_modified'));
+    $set = function(string $key, $value) use ($config): void {
+      if (!$this->isOverridden($key)) {
+        $config->set($key, $value);
+      }
+    };
+
+    $set('azure_account_name', trim($form_state->getValue('azure_account_name')));
+    $set('azure_share_name', trim($form_state->getValue('azure_share_name')));
+    $set('azure_directory_path', trim($form_state->getValue('azure_directory_path'), '/'));
+    $set('allowed_extensions', trim($form_state->getValue('allowed_extensions')));
+    $set('sas_token_expiry_minutes', (int) $form_state->getValue('sas_token_expiry_minutes'));
+    $set('page_title', trim($form_state->getValue('page_title')));
+    $set('show_file_size', (bool) $form_state->getValue('show_file_size'));
+    $set('show_last_modified', (bool) $form_state->getValue('show_last_modified'));
 
     // Only overwrite the stored key when a new one is provided.
     $newKey = trim($form_state->getValue('azure_account_key'));
-    if ($newKey !== '') {
+    if ($newKey !== '' && !$this->isOoverridden('azure_account_key')) {
       $config->set('azure_account_key', $newKey);
     }
 
