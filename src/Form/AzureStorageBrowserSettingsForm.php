@@ -243,7 +243,7 @@ class AzureStorageBrowserSettingsForm extends ConfigFormBase {
 
     // Only overwrite the stored key when a new one is provided.
     $newKey = trim($form_state->getValue('azure_account_key'));
-    if ($newKey !== '' && !$this->isOoverridden('azure_account_key')) {
+    if ($newKey !== '' && !$this->isOverridden('azure_account_key')) {
       $config->set('azure_account_key', $newKey);
     }
 
