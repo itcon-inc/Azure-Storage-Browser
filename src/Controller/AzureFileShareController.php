@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace Drupal\azure_storage_browser\Controller;
 
-use Drupal\azure_storage_browser\AzureBlobStorageService;
+use Drupal\azure_storage_browser\AzureFileShareService;
 use Drupal\azure_storage_browser\AzureStorageDisplayHelpersTrait;
 use Drupal\Core\Config\ConfigFactoryInterface;
 use Drupal\Core\Controller\ControllerBase;
@@ -16,9 +16,9 @@ use Symfony\Component\HttpKernel\Exception\AccessDeniedHttpException;
 use Symfony\Component\HttpKernel\Exception\NotFoundHttpException;
 
 /**
- * Controller for the Azure Blob Storage browser pages.
+ * Controller for the Azure File Share browser pages.
  */
-class AzureStorageBrowserController extends ControllerBase {
+class AzureFileShareController extends ControllerBase {
 
   use AzureStorageDisplayHelpersTrait;
 
@@ -26,15 +26,15 @@ class AzureStorageBrowserController extends ControllerBase {
   public $settings;
 
   /**
-   * Constructs an AzureStorageBrowserController object.
+   * Constructs an AzureFileShareController object.
    *
-   * @param \Drupal\storage_brwoser\AzureBlobStorageService $azureService
-   *   The module handler.
+   * @param \Drupal\azure_storage_browser\AzureFileShareService $azureService
+   *   The Azure File Share service.
    * @param \Drupal\Core\Config\ConfigFactoryInterface $configFactory
    *   The config factory.
    */
   public function __construct(
-    AzureBlobStorageService $azureService,
+    AzureFileShareService $azureService,
     ConfigFactoryInterface $configFactory,
   ) {
     $this->azureService = $azureService;
@@ -46,7 +46,7 @@ class AzureStorageBrowserController extends ControllerBase {
    */
   public static function create(ContainerInterface $container): static {
     return new static(
-      $container->get('azure_storage_browser.blob_storage'),
+      $container->get('azure_storage_browser.file_share'),
       $container->get('config.factory'),
     );
   }
@@ -59,15 +59,15 @@ class AzureStorageBrowserController extends ControllerBase {
    * Renders the file listing page.
    */
   public function listFiles(): array {
-    $config         = $this->settings;
-    $showSize       = (bool) $config->get('show_file_size');
-    $showModified   = (bool) $config->get('show_last_modified');
-    $rawExtensions  = (string) ($config->get('allowed_extensions') ?? '');
+    $config            = $this->settings;
+    $showSize          = (bool) $config->get('show_file_size');
+    $showModified      = (bool) $config->get('show_last_modified');
+    $rawExtensions     = (string) ($config->get('allowed_extensions') ?? '');
     $allowedExtensions = $this->parseExtensions($rawExtensions);
 
-    // Attempt to list blobs; surface configuration errors gracefully.
+    // Attempt to list files; surface configuration errors gracefully.
     try {
-      $blobs = $this->azureService->listBlobs();
+      $files = $this->azureService->listFiles();
     }
     catch (\RuntimeException $e) {
       $this->messenger()->addError($this->t(
@@ -79,13 +79,13 @@ class AzureStorageBrowserController extends ControllerBase {
 
     // Filter by allowed extensions if configured.
     if ($allowedExtensions !== []) {
-      $blobs = array_values(array_filter(
-        $blobs,
-        fn(array $b) => in_array($this->fileExtension($b['name']), $allowedExtensions, true)
+      $files = array_values(array_filter(
+        $files,
+        fn(array $f) => in_array($this->fileExtension($f['name']), $allowedExtensions, true)
       ));
     }
 
-    if ($blobs === []) {
+    if ($files === []) {
       return [
         '#markup' => $this->t('No files are currently available.'),
       ];
@@ -103,25 +103,25 @@ class AzureStorageBrowserController extends ControllerBase {
 
     // Build table rows.
     $rows = [];
-    foreach ($blobs as $blob) {
+    foreach ($files as $file) {
       $downloadUrl = Url::fromRoute(
-        'azure_storage_browser.download',
-        ['blob' => base64_encode($blob['name'])],
+        'azure_storage_browser.file_share.download',
+        ['file' => base64_encode($file['name'])],
         ['absolute' => FALSE]
       );
 
       $row = [
-        // Display just the filename portion, but use the full blob name for
-        // the download route so virtual-directory paths work correctly.
-        ['data' => $this->formatDisplayName($blob['name'])],
+        // Display just the filename portion, but use the full path for the
+        // download route so subdirectory paths work correctly.
+        ['data' => $this->formatDisplayName($file['name'])],
       ];
 
       if ($showSize) {
-        $row[] = ['data' => $this->formatBytes($blob['size'])];
+        $row[] = ['data' => $this->formatBytes($file['size'])];
       }
 
       if ($showModified) {
-        $row[] = ['data' => $this->formatDate($blob['last_modified'])];
+        $row[] = ['data' => $this->formatDate($file['last_modified'])];
       }
 
       $row[] = [
@@ -148,7 +148,7 @@ class AzureStorageBrowserController extends ControllerBase {
         'library' => ['azure_storage_browser/styles'],
       ],
       '#cache'      => [
-        // Do not cache the listing; blobs change frequently.
+        // Do not cache the listing; files change frequently.
         'max-age' => 0,
       ],
     ];
@@ -157,13 +157,13 @@ class AzureStorageBrowserController extends ControllerBase {
   /**
    * Redirects the user to a time-limited SAS download URL.
    *
-   * The blob name is passed as a base64-encoded route parameter to safely
-   * handle blobs whose names contain slashes or special characters.
+   * The file path is passed as a base64-encoded route parameter to safely
+   * handle paths containing slashes or special characters.
    */
-  public function downloadFile(Request $request, string $blob): RedirectResponse {
-    // Decode and validate the blob name.
-    $blobName = base64_decode($blob, strict: true);
-    if ($blobName === false || $blobName === '') {
+  public function downloadFile(Request $request, string $file): RedirectResponse {
+    // Decode and validate the file path.
+    $filePath = base64_decode($file, strict: true);
+    if ($filePath === false || $filePath === '') {
       throw new NotFoundHttpException();
     }
 
@@ -173,19 +173,19 @@ class AzureStorageBrowserController extends ControllerBase {
     $allowedExtensions = $this->parseExtensions($rawExtensions);
 
     if ($allowedExtensions !== [] &&
-        !in_array($this->fileExtension($blobName), $allowedExtensions, true)) {
+        !in_array($this->fileExtension($filePath), $allowedExtensions, true)) {
       throw new AccessDeniedHttpException('This file type is not permitted for download.');
     }
 
     try {
-      $sasUrl = $this->azureService->generateSasUrl($blobName);
+      $sasUrl = $this->azureService->generateSasUrl($filePath);
     }
     catch (\RuntimeException $e) {
       $this->messenger()->addError($this->t(
         'Could not generate a download link: @message',
         ['@message' => $e->getMessage()]
       ));
-      return $this->redirect('azure_storage_browser.list');
+      return $this->redirect('azure_storage_browser.file_share.list');
     }
 
     // 302 redirect to the SAS URL so the browser starts the download directly.

@@ -1,9 +1,9 @@
 access azure storage browser:
   title: 'Access Azure Storage Browser'
-  description: 'View and download files listed from the configured Azure Blob Storage container.'
+  description: 'View and download files listed from the configured Azure Blob Storage container and/or Azure File Share.'
   restrict access: true
 
 administer azure storage browser:
   title: 'Administer Azure Storage Browser'
-  description: 'Configure Azure storage account credentials, container, and display settings.'
+  description: 'Configure Azure storage account credentials, container, file share, and display settings.'
   restrict access: true

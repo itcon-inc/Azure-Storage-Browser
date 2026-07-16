@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace Drupal\azure_file_browser;
+namespace Drupal\azure_storage_browser;
 
 use Drupal\Core\Config\ConfigFactoryInterface;
 use Drupal\Core\StringTranslation\StringTranslationTrait;
@@ -245,7 +245,7 @@ final class AzureFileShareService {
    * @throws \RuntimeException if required settings are missing.
    */
   private function getConfig(): array {
-    $cfg = $this->configFactory->get('azure_file_browser.settings');
+    $cfg = $this->configFactory->get('azure_storage_browser.settings');
 
     $account = (string) $cfg->get('azure_account_name');
     $key     = (string) $cfg->get('azure_account_key');
@@ -253,7 +253,7 @@ final class AzureFileShareService {
 
     if ($account === '' || $key === '' || $share === '') {
       throw new \RuntimeException(
-        'Azure File Browser is not fully configured. '
+        'Azure File Share Browser is not fully configured. '
         . 'Please set the account name, account key, and file share name.'
       );
     }

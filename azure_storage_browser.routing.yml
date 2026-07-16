@@ -23,3 +23,21 @@ azure_storage_browser.download:
     _permission: 'access azure storage browser'
   options:
     utf8: true
+
+azure_storage_browser.file_share.list:
+  path: '/admin/azure-storage/files'
+  defaults:
+    _controller: '\Drupal\azure_storage_browser\Controller\AzureFileShareController::listFiles'
+    _title: 'Azure File Share Browser'
+  requirements:
+    _permission: 'access azure storage browser'
+
+azure_storage_browser.file_share.download:
+  path: '/admin/azure-storage/files/download/{file}'
+  defaults:
+    _controller: '\Drupal\azure_storage_browser\Controller\AzureFileShareController::downloadFile'
+    _title: 'Download Azure File'
+  requirements:
+    _permission: 'access azure storage browser'
+  options:
+    utf8: true

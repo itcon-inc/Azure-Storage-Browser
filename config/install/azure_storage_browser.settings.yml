@@ -1,6 +1,10 @@
 azure_account_name: ''
 azure_account_key: ''
 azure_container_name: ''
+azure_blob_prefix: ''
+azure_share_name: ''
+azure_directory_path: ''
+allowed_extensions: ''
 sas_token_expiry_minutes: 60
 page_title: 'Available Files'
 show_file_size: true

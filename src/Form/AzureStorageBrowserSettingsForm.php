@@ -77,22 +77,46 @@ class AzureStorageBrowserSettingsForm extends ConfigFormBase {
       ];
     }
 
-    $form['azure_storage'] = [
+    $form['blob_storage'] = [
       '#type' => 'details',
-      '#title' => $this->t('File Share & Filtering'),
+      '#title' => $this->t('Blob Storage'),
       '#open' => TRUE,
     ];
 
-    $form['azure_storage']['azure_share_name'] = [
+    $form['blob_storage']['azure_container_name'] = [
+      '#type' => 'textfield',
+      '#title' => $this->t('Container Name'),
+      '#description' => $this->t('The name of the Azure Blob Storage container to list files from.'),
+      '#default_value' => $config->get('azure_container_name'),
+      '#maxlength' => 63,
+    ];
+
+    $form['blob_storage']['azure_blob_prefix'] = [
+      '#type' => 'textfield',
+      '#title' => $this->t('Blob Name Prefix (optional)'),
+      '#description' => $this->t(
+        'Only list blobs whose name starts with this prefix. '
+        . 'Leave blank to list the entire container, e.g. <code>backups/production/</code>.'
+      ),
+      '#default_value' => $config->get('azure_blob_prefix'),
+      '#maxlength' => 1024,
+    ];
+
+    $form['file_share'] = [
+      '#type' => 'details',
+      '#title' => $this->t('File Share'),
+      '#open' => TRUE,
+    ];
+
+    $form['file_share']['azure_share_name'] = [
       '#type' => 'textfield',
       '#title' => $this->t('File Share Name'),
       '#description' => $this->t('The name of the Azure Files (classic file share) to list files from.'),
       '#default_value' => $config->get('azure_share_name'),
-      '#required' => TRUE,
       '#maxlength' => 63,
     ];
 
-    $form['azure_storage']['azure_directory_path'] = [
+    $form['file_share']['azure_directory_path'] = [
       '#type' => 'textfield',
       '#title' => $this->t('Directory Path (optional)'),
       '#description' => $this->t(
@@ -102,6 +126,12 @@ class AzureStorageBrowserSettingsForm extends ConfigFormBase {
       ),
       '#default_value' => $config->get('azure_directory_path'),
       '#maxlength' => 1024,
+    ];
+
+    $form['azure_storage'] = [
+      '#type' => 'details',
+      '#title' => $this->t('Filtering'),
+      '#open' => TRUE,
     ];
 
     $form['azure_storage']['allowed_extensions'] = [
@@ -171,8 +201,10 @@ class AzureStorageBrowserSettingsForm extends ConfigFormBase {
     $map = [
       'azure_account_name' => ['azure_credentials', 'azure_account_name'],
       'azure_account_key' => ['azure_credentials', 'azure_account_key'],
-      'azure_share_name' => ['azure_storage', 'azure_share_name'],
-      'azure_directory_path' => ['azure_storage', 'azure_directory_path'],
+      'azure_container_name' => ['blob_storage', 'azure_container_name'],
+      'azure_blob_prefix' => ['blob_storage', 'azure_blob_prefix'],
+      'azure_share_name' => ['file_share', 'azure_share_name'],
+      'azure_directory_path' => ['file_share', 'azure_directory_path'],
       'allowed_extensions' => ['azure_storage', 'allowed_extensions'],
       'sas_token_expiry_minutes' => ['download', 'sas_token_expiry_minutes'],
       'page_title' => ['display', 'page_title'],
@@ -207,7 +239,7 @@ class AzureStorageBrowserSettingsForm extends ConfigFormBase {
   public function validateForm(array &$form, FormStateInterface $form_state): void {
     parent::validateForm($form, $form_state);
 
-    if (isset($this->isOverridden['sas_token_expiry_minutes'])) {
+    if ($this->isOverridden('sas_token_expiry_minutes')) {
       return;
     }
 
@@ -233,6 +265,8 @@ class AzureStorageBrowserSettingsForm extends ConfigFormBase {
     };
 
     $set('azure_account_name', trim($form_state->getValue('azure_account_name')));
+    $set('azure_container_name', trim($form_state->getValue('azure_container_name')));
+    $set('azure_blob_prefix', trim($form_state->getValue('azure_blob_prefix'), '/'));
     $set('azure_share_name', trim($form_state->getValue('azure_share_name')));
     $set('azure_directory_path', trim($form_state->getValue('azure_directory_path'), '/'));
     $set('allowed_extensions', trim($form_state->getValue('allowed_extensions')));

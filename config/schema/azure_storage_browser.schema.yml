@@ -11,6 +11,15 @@ azure_storage_browser.settings:
     azure_container_name:
       type: string
       label: 'Azure Blob Container Name'
+    azure_blob_prefix:
+      type: string
+      label: 'Blob Name Prefix'
+    azure_share_name:
+      type: string
+      label: 'Azure File Share Name'
+    azure_directory_path:
+      type: string
+      label: 'Directory Path'
     sas_token_expiry_minutes:
       type: integer
       label: 'SAS Token Expiry (minutes)'

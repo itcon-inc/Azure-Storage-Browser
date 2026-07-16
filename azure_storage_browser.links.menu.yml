@@ -5,6 +5,13 @@ azure_storage_browser.list:
   parent: system.admin_config_services
   weight: 50
 
+azure_storage_browser.file_share.list:
+  title: 'Azure File Share Browser'
+  description: 'Browse and download files from an Azure Files (classic file share).'
+  route_name: azure_storage_browser.file_share.list
+  parent: system.admin_config_services
+  weight: 51
+
 azure_storage_browser.settings:
   title: 'Azure Storage Settings'
   description: 'Configure Azure Blob Storage credentials and container settings.'
