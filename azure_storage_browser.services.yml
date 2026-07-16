@@ -1,5 +1,5 @@
 services:
-  azure_storage_browser.blob_storage:
-    class: Drupal\azure_storage_browser\AzureBlobStorageService
+  azure_storage_browser.file_share:
+    class: Drupal\azure_storage_browser\AzureFileShareService
     arguments:
       - '@config.factory'

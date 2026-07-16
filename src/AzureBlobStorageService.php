@@ -54,7 +54,7 @@ final class AzureBlobStorageService {
     }
 
     $url = sprintf(
-      'https://%s.blob.core.windows.net/%s?%s',
+      'https://%s.file.core.usgovcloudapi.net/%s?%s',
       rawurlencode($account),
       rawurlencode($container),
       http_build_query($queryParams)
@@ -63,7 +63,7 @@ final class AzureBlobStorageService {
     $date = $this->utcDate();
     $headers = [
       'x-ms-date'    => $date,
-      'x-ms-version' => '2020-10-02',
+      'x-ms-version' => '2022-04-01',
     ];
 
     $canonicalisedHeaders = $this->canonicaliseHeaders($headers);
@@ -122,7 +122,7 @@ final class AzureBlobStorageService {
     $signedService     = 'b';       // blob
     $signedResource    = 'b';       // single blob
     $signedProtocol    = 'https';
-    $signedVersion     = '2020-10-02';
+    $signedVersion     = '2022-04-01';
 
     $stringToSign = implode("\n", [
       $signedPermissions,
@@ -157,7 +157,7 @@ final class AzureBlobStorageService {
     ];
 
     return sprintf(
-      'https://%s.blob.core.windows.net/%s/%s?%s',
+      'https://%s.file.core.usgovcloudapi.net/%s/%s?%s',
       rawurlencode($account),
       rawurlencode($container),
       implode('/', array_map('rawurlencode', explode('/', $blobName))),
