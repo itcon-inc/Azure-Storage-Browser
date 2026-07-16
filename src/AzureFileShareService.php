@@ -114,7 +114,7 @@ final class AzureFileShareService {
     $encodedPath = implode('/', array_map('rawurlencode', explode('/', $filePath)));
 
     return sprintf(
-      'https://%s.file.core.windows.net/%s/%s?%s',
+      'https://%s.file.core.usgovcloudapi.net/%s/%s?%s',
       rawurlencode($account),
       rawurlencode($share),
       $encodedPath,
@@ -192,7 +192,7 @@ final class AzureFileShareService {
       $resourcePath = '/' . $share . ($directoryPath !== '' ? '/' . $directoryPath : '');
 
       $url = sprintf(
-        'https://%s.file.core.windows.net%s?%s',
+        'https://%s.file.core.usgovcloudapi.net%s?%s',
         rawurlencode($account),
         $this->encodePath($resourcePath),
         http_build_query($queryParams)
