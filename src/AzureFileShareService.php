@@ -80,6 +80,13 @@ final class AzureFileShareService {
 
     $canonicalPath = '/file/' . $account . '/' . $share . '/' . ltrim($filePath, '/');
 
+    // NOTE: Unlike Blob Storage, Azure Files SAS string-to-sign has never
+    // adopted the newer (2018-11-09+) format that adds signedResource,
+    // signedSnapshotTime, and signedEncryptionScope fields — per Microsoft's
+    // "Create a service SAS" reference, that expanded format is Blob-only.
+    // Files SAS still uses the older 2015-04-05 format, which stops after
+    // signedVersion. `sr` is still a required *query parameter* on the URL
+    // below, it's just not part of the signed string for this service.
     $stringToSign = implode("\n", [
       $signedPermissions,
       $startStr,
@@ -89,9 +96,6 @@ final class AzureFileShareService {
       '',  // signedIP
       $signedProtocol,
       $signedVersion,
-      $signedResource,
-      '',  // snapshot time (not applicable to files)
-      '',  // encryption scope
       '',  // rscc (Cache-Control override)
       '',  // rscd (Content-Disposition override)
       '',  // rsce (Content-Encoding override)
