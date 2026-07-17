@@ -12,10 +12,16 @@ use Drupal\Core\StringTranslation\StringTranslationTrait;
  *
  * This implementation uses the Azure Blob Service REST API directly with
  * HMAC-SHA256 Shared Key authentication, requiring no external SDK.
+ *
+ * Downloads are proxied through this service (rather than redirecting the
+ * client to a SAS URL) so that only the Drupal server needs network access
+ * to the storage account — useful when the account's firewall restricts
+ * access to specific IP ranges that don't include end-user browsers.
  */
 final class AzureBlobStorageService {
 
   use StringTranslationTrait;
+  use AzureRestClientTrait;
 
   public function __construct(
     private readonly ConfigFactoryInterface $configFactory,
@@ -93,76 +99,73 @@ final class AzureBlobStorageService {
   }
 
   /**
-   * Generates a time-limited SAS download URL for a named blob.
-   *
-   * The URL is signed with the account key and grants read-only access for the
-   * configured number of minutes.
+   * Downloads a blob's content, streaming it directly to $destination.
    *
    * @param string $blobName
    *   The full blob name as returned by listBlobs().
+   * @param resource $destination
+   *   A writable stream, e.g. fopen('php://output', 'wb').
    *
-   * @return string
-   *   An HTTPS URL the client can use to download the blob directly.
+   * @return array{content_type: string, content_length: ?int}
+   *   Metadata about the downloaded blob, taken from Azure's response
+   *   headers.
+   *
+   * @throws \RuntimeException on HTTP or cURL errors.
    */
-  public function generateSasUrl(string $blobName): string {
+  public function downloadBlob(string $blobName, $destination): array {
     $config    = $this->getConfig();
     $account   = $config['account_name'];
     $container = $config['container_name'];
-    $key       = $config['account_key'];
-    $minutes   = $config['sas_expiry_minutes'];
 
-    $start  = new \DateTimeImmutable('now', new \DateTimeZone('UTC'));
-    $expiry = $start->modify("+{$minutes} minutes");
+    $encodedPath = implode('/', array_map('rawurlencode', explode('/', $blobName)));
 
-    $startStr  = $start->format('Y-m-d\TH:i:s\Z');
-    $expiryStr = $expiry->format('Y-m-d\TH:i:s\Z');
-
-    // Signed string for Blob Service SAS (service version 2020-10-02).
-    $signedPermissions = 'r';       // read-only
-    $signedService     = 'b';       // blob
-    $signedResource    = 'b';       // single blob
-    $signedProtocol    = 'https';
-    $signedVersion     = '2022-04-01';
-
-    $stringToSign = implode("\n", [
-      $signedPermissions,
-      $startStr,
-      $expiryStr,
-      // Canonicalised resource: /blob/account/container/blob
-      '/blob/' . $account . '/' . $container . '/' . ltrim($blobName, '/'),
-      '',  // signedIdentifier
-      '',  // signedIP
-      $signedProtocol,
-      $signedVersion,
-      $signedResource,
-      '',  // snapshot time
-      '',  // encryption scope
-      '',  // rscc (Cache-Control override)
-      '',  // rscd (Content-Disposition override)
-      '',  // rsce (Content-Encoding override)
-      '',  // rscl (Content-Language override)
-      '',  // rsct (Content-Type override)
-    ]);
-
-    $sig = base64_encode(hash_hmac('sha256', $stringToSign, base64_decode($key), true));
-
-    $sasParams = [
-      'sv'  => $signedVersion,
-      'st'  => $startStr,
-      'se'  => $expiryStr,
-      'sr'  => $signedResource,
-      'sp'  => $signedPermissions,
-      'spr' => $signedProtocol,
-      'sig' => $sig,
-    ];
-
-    return sprintf(
-      'https://%s.blob.core.usgovcloudapi.net/%s/%s?%s',
+    $url = sprintf(
+      'https://%s.blob.core.usgovcloudapi.net/%s/%s',
       rawurlencode($account),
       rawurlencode($container),
-      implode('/', array_map('rawurlencode', explode('/', $blobName))),
-      http_build_query($sasParams)
+      $encodedPath
     );
+
+    $date = $this->utcDate();
+    $headers = [
+      'x-ms-date'    => $date,
+      'x-ms-version' => '2022-04-01',
+    ];
+
+    $canonicalisedHeaders = $this->canonicaliseHeaders($headers);
+    $canonicalisedResource = $this->canonicaliseResource($account, '/' . $container . '/' . $blobName);
+
+    $stringToSign = implode("\n", [
+      'GET',   // HTTP Verb
+      '',      // Content-Encoding
+      '',      // Content-Language
+      '',      // Content-Length (empty for GET)
+      '',      // Content-MD5
+      '',      // Content-Type
+      '',      // Date (empty when x-ms-date is used)
+      '',      // If-Modified-Since
+      '',      // If-Match
+      '',      // If-None-Match
+      '',      // If-Unmodified-Since
+      '',      // Range
+      $canonicalisedHeaders,
+      $canonicalisedResource,
+    ]);
+
+    $headers['Authorization'] = $this->buildSharedKeyAuth($account, $config['account_key'], $stringToSign);
+
+    return $this->httpGetStream($url, $headers, $destination);
+  }
+
+  /**
+   * Validates that the required settings are present, without making any
+   * network calls. Lets callers fail fast (e.g. redirect with a friendly
+   * message) before committing to a streamed HTTP response.
+   *
+   * @throws \RuntimeException if required settings are missing.
+   */
+  public function assertConfigured(): void {
+    $this->getConfig();
   }
 
   // ---------------------------------------------------------------------------
@@ -200,99 +203,6 @@ final class AzureBlobStorageService {
   }
 
   /**
-   * Builds the Authorization header value for Shared Key authentication.
-   */
-  private function buildSharedKeyAuth(string $account, string $key, string $stringToSign): string {
-    $sig = base64_encode(hash_hmac('sha256', $stringToSign, base64_decode($key), true));
-    return "SharedKey {$account}:{$sig}";
-  }
-
-  /**
-   * Produces the canonicalised headers string required by Shared Key auth.
-   *
-   * @param array<string, string> $headers
-   */
-  private function canonicaliseHeaders(array $headers): string {
-    $msHeaders = [];
-    foreach ($headers as $name => $value) {
-      $lower = strtolower($name);
-      if (str_starts_with($lower, 'x-ms-')) {
-        $msHeaders[$lower] = trim($value);
-      }
-    }
-    ksort($msHeaders);
-    $lines = [];
-    foreach ($msHeaders as $name => $value) {
-      $lines[] = "{$name}:{$value}";
-    }
-    return implode("\n", $lines);
-  }
-
-  /**
-   * Produces the canonicalised resource string for Shared Key auth.
-   *
-   * @param array<string, string> $queryParams
-   */
-  private function canonicaliseResource(string $account, string $path, array $queryParams): string {
-    $resource = "/{$account}{$path}";
-    ksort($queryParams);
-    foreach ($queryParams as $k => $v) {
-      $resource .= "\n" . strtolower($k) . ':' . $v;
-    }
-    return $resource;
-  }
-
-  /**
-   * Returns the current UTC date in the RFC 1123 format Azure requires.
-   */
-  private function utcDate(): string {
-    return gmdate('D, d M Y H:i:s') . ' GMT';
-  }
-
-  /**
-   * Performs an HTTP GET request and returns the response body.
-   *
-   * @param array<string, string> $headers
-   *
-   * @throws \RuntimeException on cURL or HTTP errors.
-   */
-  private function httpGet(string $url, array $headers): string {
-    $curlHeaders = [];
-    foreach ($headers as $name => $value) {
-      $curlHeaders[] = "{$name}: {$value}";
-    }
-
-    $ch = curl_init($url);
-    if ($ch === false) {
-      throw new \RuntimeException('Failed to initialise cURL.');
-    }
-
-    curl_setopt_array($ch, [
-      CURLOPT_RETURNTRANSFER => true,
-      CURLOPT_HTTPHEADER     => $curlHeaders,
-      CURLOPT_TIMEOUT        => 30,
-      CURLOPT_SSL_VERIFYPEER => true,
-    ]);
-
-    $body   = curl_exec($ch);
-    $status = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-    $error  = curl_error($ch);
-    curl_close($ch);
-
-    if ($body === false || $error !== '') {
-      throw new \RuntimeException("cURL error contacting Azure: {$error}");
-    }
-
-    if ($status < 200 || $status >= 300) {
-      // Try to extract Azure's error message from the XML body.
-      $message = $this->extractAzureError((string) $body) ?? "HTTP {$status}";
-      throw new \RuntimeException("Azure Blob Storage returned an error: {$message}");
-    }
-
-    return (string) $body;
-  }
-
-  /**
    * Parses the List Blobs XML response into a structured array.
    *
    * @return list<array{name:string,size:int,last_modified:string,content_type:string}>
@@ -316,24 +226,6 @@ final class AzureBlobStorageService {
       ];
     }
     return $blobs;
-  }
-
-  /**
-   * Attempts to extract the human-readable message from an Azure error response.
-   */
-  private function extractAzureError(string $xml): ?string {
-    $prev = libxml_use_internal_errors(true);
-    $doc  = simplexml_load_string($xml);
-    libxml_use_internal_errors($prev);
-    if ($doc === false) {
-      return null;
-    }
-    $message = (string) ($doc->Message ?? '');
-    $code    = (string) ($doc->Code ?? '');
-    if ($code !== '' && $message !== '') {
-      return "{$code} – " . trim($message);
-    }
-    return $message !== '' ? trim($message) : null;
   }
 
 }

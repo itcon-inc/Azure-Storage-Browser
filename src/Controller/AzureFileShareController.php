@@ -8,11 +8,11 @@ use Drupal\azure_storage_browser\AzureFileShareService;
 use Drupal\azure_storage_browser\AzureStorageDisplayHelpersTrait;
 use Drupal\Core\Config\ConfigFactoryInterface;
 use Drupal\Core\Controller\ControllerBase;
-use Drupal\Core\Routing\TrustedRedirectResponse;
 use Drupal\Core\Url;
 use Symfony\Component\DependencyInjection\ContainerInterface;
-use Symfony\Component\HttpFoundation\RedirectResponse;
 use Symfony\Component\HttpFoundation\Request;
+use Symfony\Component\HttpFoundation\Response;
+use Symfony\Component\HttpFoundation\StreamedResponse;
 use Symfony\Component\HttpKernel\Exception\AccessDeniedHttpException;
 use Symfony\Component\HttpKernel\Exception\NotFoundHttpException;
 
@@ -156,12 +156,18 @@ class AzureFileShareController extends ControllerBase {
   }
 
   /**
-   * Redirects the user to a time-limited SAS download URL.
+   * Streams a file's content back to the client through the Drupal server.
+   *
+   * The download is proxied rather than redirecting the browser to a SAS
+   * URL, so only the Drupal server needs network access to the storage
+   * account — important when the account's firewall is restricted to
+   * specific IP ranges that don't (and can't reliably) include end-user
+   * browsers.
    *
    * The file path is passed as a base64-encoded route parameter to safely
    * handle paths containing slashes or special characters.
    */
-  public function downloadFile(Request $request, string $file): RedirectResponse {
+  public function downloadFile(Request $request, string $file): Response {
     // Decode and validate the file path.
     $filePath = base64_decode($file, strict: true);
     if ($filePath === false || $filePath === '') {
@@ -178,23 +184,48 @@ class AzureFileShareController extends ControllerBase {
       throw new AccessDeniedHttpException('This file type is not permitted for download.');
     }
 
+    // Fail fast (with a friendly redirect) on the common misconfiguration
+    // case, before committing to a streamed response whose headers can't
+    // be changed once sent.
     try {
-      $sasUrl = $this->azureService->generateSasUrl($filePath);
+      $this->azureService->assertConfigured();
     }
     catch (\RuntimeException $e) {
       $this->messenger()->addError($this->t(
-        'Could not generate a download link: @message',
+        'Could not download file: @message',
         ['@message' => $e->getMessage()]
       ));
       return $this->redirect('azure_storage_browser.file_share.list');
     }
 
-    // 302 redirect to the SAS URL so the browser starts the download directly.
-    // The SAS URL points at an external Azure domain, so it must be wrapped
-    // in a TrustedRedirectResponse or Drupal's redirect guard will block it.
-    return new TrustedRedirectResponse($sasUrl, 302, [
-      'Cache-Control' => 'no-store, no-cache',
-    ]);
+    $azureService = $this->azureService;
+    $filename = basename($filePath);
+
+    $response = new StreamedResponse(function () use ($azureService, $filePath): void {
+      $destination = fopen('php://output', 'wb');
+      try {
+        $azureService->downloadFile($filePath, $destination);
+      }
+      catch (\RuntimeException $e) {
+        // Headers are already committed by the time this callback runs, so
+        // a clean error page/redirect isn't possible here. Log it for site
+        // admins and leave a short message in the response body.
+        \Drupal::logger('azure_storage_browser')->error(
+          'File Share download failed for @file: @message',
+          ['@file' => $filePath, '@message' => $e->getMessage()]
+        );
+        echo 'Download failed: ' . $e->getMessage();
+      }
+      finally {
+        fclose($destination);
+      }
+    });
+
+    $response->headers->set('Content-Type', 'application/octet-stream');
+    $response->headers->set('Content-Disposition', 'attachment; filename="' . addslashes($filename) . '"');
+    $response->headers->set('Cache-Control', 'no-store, no-cache');
+
+    return $response;
   }
 
 }

@@ -15,10 +15,16 @@ use Drupal\Core\StringTranslation\StringTranslationTrait;
  *
  * Unlike Blob Storage, Azure File Shares are hierarchical (directories +
  * files), so listing requires recursive traversal of the directory tree.
+ *
+ * Downloads are proxied through this service (rather than redirecting the
+ * client to a SAS URL) so that only the Drupal server needs network access
+ * to the storage account — useful when the account's firewall restricts
+ * access to specific IP ranges that don't include end-user browsers.
  */
 final class AzureFileShareService {
 
   use StringTranslationTrait;
+  use AzureRestClientTrait;
 
   public function __construct(
     private readonly ConfigFactoryInterface $configFactory,
@@ -48,82 +54,74 @@ final class AzureFileShareService {
   }
 
   /**
-   * Generates a time-limited SAS download URL for a named file.
-   *
-   * The URL is signed with the account key and grants read-only access for the
-   * configured number of minutes.
+   * Downloads a file's content, streaming it directly to $destination.
    *
    * @param string $filePath
    *   The full file path within the share, as returned by listFiles().
+   * @param resource $destination
+   *   A writable stream, e.g. fopen('php://output', 'wb').
    *
-   * @return string
-   *   An HTTPS URL the client can use to download the file directly.
+   * @return array{content_type: string, content_length: ?int}
+   *   Metadata about the downloaded file, taken from Azure's response
+   *   headers.
+   *
+   * @throws \RuntimeException on HTTP or cURL errors.
    */
-  public function generateSasUrl(string $filePath): string {
+  public function downloadFile(string $filePath, $destination): array {
     $config  = $this->getConfig();
     $account = $config['account_name'];
     $share   = $config['share_name'];
-    $key     = $config['account_key'];
-    $minutes = $config['sas_expiry_minutes'];
-
-    $start  = new \DateTimeImmutable('now', new \DateTimeZone('UTC'));
-    $expiry = $start->modify("+{$minutes} minutes");
-
-    $startStr  = $start->format('Y-m-d\TH:i:s\Z');
-    $expiryStr = $expiry->format('Y-m-d\TH:i:s\Z');
-
-    // Signed string for File Service SAS (service version 2020-10-02).
-    $signedPermissions = 'r';       // read-only
-    $signedResource    = 'f';       // single file ('s' would be the whole share)
-    $signedProtocol    = 'https';
-    $signedVersion     = '2020-10-02';
-
-    $canonicalPath = '/file/' . $account . '/' . $share . '/' . ltrim($filePath, '/');
-
-    // NOTE: Unlike Blob Storage, Azure Files SAS string-to-sign has never
-    // adopted the newer (2018-11-09+) format that adds signedResource,
-    // signedSnapshotTime, and signedEncryptionScope fields — per Microsoft's
-    // "Create a service SAS" reference, that expanded format is Blob-only.
-    // Files SAS still uses the older 2015-04-05 format, which stops after
-    // signedVersion. `sr` is still a required *query parameter* on the URL
-    // below, it's just not part of the signed string for this service.
-    $stringToSign = implode("\n", [
-      $signedPermissions,
-      $startStr,
-      $expiryStr,
-      $canonicalPath,
-      '',  // signedIdentifier
-      '',  // signedIP
-      $signedProtocol,
-      $signedVersion,
-      '',  // rscc (Cache-Control override)
-      '',  // rscd (Content-Disposition override)
-      '',  // rsce (Content-Encoding override)
-      '',  // rscl (Content-Language override)
-      '',  // rsct (Content-Type override)
-    ]);
-
-    $sig = base64_encode(hash_hmac('sha256', $stringToSign, base64_decode($key), true));
-
-    $sasParams = [
-      'sv'  => $signedVersion,
-      'st'  => $startStr,
-      'se'  => $expiryStr,
-      'sr'  => $signedResource,
-      'sp'  => $signedPermissions,
-      'spr' => $signedProtocol,
-      'sig' => $sig,
-    ];
 
     $encodedPath = implode('/', array_map('rawurlencode', explode('/', $filePath)));
+    $resourcePath = '/' . $share . '/' . ltrim($filePath, '/');
 
-    return sprintf(
-      'https://%s.file.core.usgovcloudapi.net/%s/%s?%s',
+    $url = sprintf(
+      'https://%s.file.core.usgovcloudapi.net/%s/%s',
       rawurlencode($account),
       rawurlencode($share),
-      $encodedPath,
-      http_build_query($sasParams)
+      $encodedPath
     );
+
+    $date = $this->utcDate();
+    $headers = [
+      'x-ms-date'    => $date,
+      'x-ms-version' => '2020-10-02',
+    ];
+
+    $canonicalisedHeaders = $this->canonicaliseHeaders($headers);
+    $canonicalisedResource = $this->canonicaliseResource($account, $resourcePath);
+
+    $stringToSign = implode("\n", [
+      'GET',   // HTTP Verb
+      '',      // Content-Encoding
+      '',      // Content-Language
+      '',      // Content-Length (empty for GET)
+      '',      // Content-MD5
+      '',      // Content-Type
+      '',      // Date (empty when x-ms-date is used)
+      '',      // If-Modified-Since
+      '',      // If-Match
+      '',      // If-None-Match
+      '',      // If-Unmodified-Since
+      '',      // Range
+      $canonicalisedHeaders,
+      $canonicalisedResource,
+    ]);
+
+    $headers['Authorization'] = $this->buildSharedKeyAuth($account, $config['account_key'], $stringToSign);
+
+    return $this->httpGetStream($url, $headers, $destination);
+  }
+
+  /**
+   * Validates that the required settings are present, without making any
+   * network calls. Lets callers fail fast (e.g. redirect with a friendly
+   * message) before committing to a streamed HTTP response.
+   *
+   * @throws \RuntimeException if required settings are missing.
+   */
+  public function assertConfigured(): void {
+    $this->getConfig();
   }
 
   // ---------------------------------------------------------------------------
@@ -272,102 +270,10 @@ final class AzureFileShareService {
   }
 
   /**
-   * Builds the Authorization header value for Shared Key authentication.
-   */
-  private function buildSharedKeyAuth(string $account, string $key, string $stringToSign): string {
-    $sig = base64_encode(hash_hmac('sha256', $stringToSign, base64_decode($key), true));
-    return "SharedKey {$account}:{$sig}";
-  }
-
-  /**
-   * Produces the canonicalised headers string required by Shared Key auth.
-   *
-   * @param array<string, string> $headers
-   */
-  private function canonicaliseHeaders(array $headers): string {
-    $msHeaders = [];
-    foreach ($headers as $name => $value) {
-      $lower = strtolower($name);
-      if (str_starts_with($lower, 'x-ms-')) {
-        $msHeaders[$lower] = trim($value);
-      }
-    }
-    ksort($msHeaders);
-    $lines = [];
-    foreach ($msHeaders as $name => $value) {
-      $lines[] = "{$name}:{$value}";
-    }
-    return implode("\n", $lines);
-  }
-
-  /**
-   * Produces the canonicalised resource string for Shared Key auth.
-   *
-   * @param array<string, string> $queryParams
-   */
-  private function canonicaliseResource(string $account, string $path, array $queryParams): string {
-    $resource = "/{$account}{$path}";
-    ksort($queryParams);
-    foreach ($queryParams as $k => $v) {
-      $resource .= "\n" . strtolower($k) . ':' . $v;
-    }
-    return $resource;
-  }
-
-  /**
    * URL-encodes each segment of a resource path while preserving the slashes.
    */
   private function encodePath(string $path): string {
     return implode('/', array_map('rawurlencode', explode('/', $path)));
-  }
-
-  /**
-   * Returns the current UTC date in the RFC 1123 format Azure requires.
-   */
-  private function utcDate(): string {
-    return gmdate('D, d M Y H:i:s') . ' GMT';
-  }
-
-  /**
-   * Performs an HTTP GET request and returns the response body.
-   *
-   * @param array<string, string> $headers
-   *
-   * @throws \RuntimeException on cURL or HTTP errors.
-   */
-  private function httpGet(string $url, array $headers): string {
-    $curlHeaders = [];
-    foreach ($headers as $name => $value) {
-      $curlHeaders[] = "{$name}: {$value}";
-    }
-
-    $ch = curl_init($url);
-    if ($ch === false) {
-      throw new \RuntimeException('Failed to initialise cURL.');
-    }
-
-    curl_setopt_array($ch, [
-      CURLOPT_RETURNTRANSFER => true,
-      CURLOPT_HTTPHEADER     => $curlHeaders,
-      CURLOPT_TIMEOUT        => 30,
-      CURLOPT_SSL_VERIFYPEER => true,
-    ]);
-
-    $body   = curl_exec($ch);
-    $status = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-    $error  = curl_error($ch);
-    curl_close($ch);
-
-    if ($body === false || $error !== '') {
-      throw new \RuntimeException("cURL error contacting Azure: {$error}");
-    }
-
-    if ($status < 200 || $status >= 300) {
-      $message = $this->extractAzureError((string) $body) ?? "HTTP {$status}";
-      throw new \RuntimeException("Azure Files returned an error: {$message}");
-    }
-
-    return (string) $body;
   }
 
   /**
@@ -416,24 +322,6 @@ final class AzureFileShareService {
       'directories' => $directories,
       'next_marker' => $nextMarker,
     ];
-  }
-
-  /**
-   * Attempts to extract the human-readable message from an Azure error response.
-   */
-  private function extractAzureError(string $xml): ?string {
-    $prev = libxml_use_internal_errors(true);
-    $doc  = simplexml_load_string($xml);
-    libxml_use_internal_errors($prev);
-    if ($doc === false) {
-      return null;
-    }
-    $message = (string) ($doc->Message ?? '');
-    $code    = (string) ($doc->Code ?? '');
-    if ($code !== '' && $message !== '') {
-      return "{$code} – " . trim($message);
-    }
-    return $message !== '' ? trim($message) : null;
   }
 
 }

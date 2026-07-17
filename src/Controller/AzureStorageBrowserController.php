@@ -8,11 +8,11 @@ use Drupal\azure_storage_browser\AzureBlobStorageService;
 use Drupal\azure_storage_browser\AzureStorageDisplayHelpersTrait;
 use Drupal\Core\Config\ConfigFactoryInterface;
 use Drupal\Core\Controller\ControllerBase;
-use Drupal\Core\Routing\TrustedRedirectResponse;
 use Drupal\Core\Url;
 use Symfony\Component\DependencyInjection\ContainerInterface;
-use Symfony\Component\HttpFoundation\RedirectResponse;
 use Symfony\Component\HttpFoundation\Request;
+use Symfony\Component\HttpFoundation\Response;
+use Symfony\Component\HttpFoundation\StreamedResponse;
 use Symfony\Component\HttpKernel\Exception\AccessDeniedHttpException;
 use Symfony\Component\HttpKernel\Exception\NotFoundHttpException;
 
@@ -156,12 +156,18 @@ class AzureStorageBrowserController extends ControllerBase {
   }
 
   /**
-   * Redirects the user to a time-limited SAS download URL.
+   * Streams a blob's content back to the client through the Drupal server.
+   *
+   * The download is proxied rather than redirecting the browser to a SAS
+   * URL, so only the Drupal server needs network access to the storage
+   * account — important when the account's firewall is restricted to
+   * specific IP ranges that don't (and can't reliably) include end-user
+   * browsers.
    *
    * The blob name is passed as a base64-encoded route parameter to safely
    * handle blobs whose names contain slashes or special characters.
    */
-  public function downloadFile(Request $request, string $blob): RedirectResponse {
+  public function downloadFile(Request $request, string $blob): Response {
     // Decode and validate the blob name.
     $blobName = base64_decode($blob, strict: true);
     if ($blobName === false || $blobName === '') {
@@ -178,23 +184,48 @@ class AzureStorageBrowserController extends ControllerBase {
       throw new AccessDeniedHttpException('This file type is not permitted for download.');
     }
 
+    // Fail fast (with a friendly redirect) on the common misconfiguration
+    // case, before committing to a streamed response whose headers can't
+    // be changed once sent.
     try {
-      $sasUrl = $this->azureService->generateSasUrl($blobName);
+      $this->azureService->assertConfigured();
     }
     catch (\RuntimeException $e) {
       $this->messenger()->addError($this->t(
-        'Could not generate a download link: @message',
+        'Could not download file: @message',
         ['@message' => $e->getMessage()]
       ));
       return $this->redirect('azure_storage_browser.list');
     }
 
-    // 302 redirect to the SAS URL so the browser starts the download directly.
-    // The SAS URL points at an external Azure domain, so it must be wrapped
-    // in a TrustedRedirectResponse or Drupal's redirect guard will block it.
-    return new TrustedRedirectResponse($sasUrl, 302, [
-      'Cache-Control' => 'no-store, no-cache',
-    ]);
+    $azureService = $this->azureService;
+    $filename = basename($blobName);
+
+    $response = new StreamedResponse(function () use ($azureService, $blobName): void {
+      $destination = fopen('php://output', 'wb');
+      try {
+        $azureService->downloadBlob($blobName, $destination);
+      }
+      catch (\RuntimeException $e) {
+        // Headers are already committed by the time this callback runs, so
+        // a clean error page/redirect isn't possible here. Log it for site
+        // admins and leave a short message in the response body.
+        \Drupal::logger('azure_storage_browser')->error(
+          'Blob download failed for @blob: @message',
+          ['@blob' => $blobName, '@message' => $e->getMessage()]
+        );
+        echo 'Download failed: ' . $e->getMessage();
+      }
+      finally {
+        fclose($destination);
+      }
+    });
+
+    $response->headers->set('Content-Type', 'application/octet-stream');
+    $response->headers->set('Content-Disposition', 'attachment; filename="' . addslashes($filename) . '"');
+    $response->headers->set('Cache-Control', 'no-store, no-cache');
+
+    return $response;
   }
 
 }
