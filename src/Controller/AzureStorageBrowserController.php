@@ -8,6 +8,7 @@ use Drupal\azure_storage_browser\AzureBlobStorageService;
 use Drupal\azure_storage_browser\AzureStorageDisplayHelpersTrait;
 use Drupal\Core\Config\ConfigFactoryInterface;
 use Drupal\Core\Controller\ControllerBase;
+use Drupal\Core\Routing\TrustedRedirectResponse;
 use Drupal\Core\Url;
 use Symfony\Component\DependencyInjection\ContainerInterface;
 use Symfony\Component\HttpFoundation\RedirectResponse;
@@ -189,7 +190,9 @@ class AzureStorageBrowserController extends ControllerBase {
     }
 
     // 302 redirect to the SAS URL so the browser starts the download directly.
-    return new RedirectResponse($sasUrl, 302, [
+    // The SAS URL points at an external Azure domain, so it must be wrapped
+    // in a TrustedRedirectResponse or Drupal's redirect guard will block it.
+    return new TrustedRedirectResponse($sasUrl, 302, [
       'Cache-Control' => 'no-store, no-cache',
     ]);
   }
