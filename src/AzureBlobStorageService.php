@@ -54,7 +54,7 @@ final class AzureBlobStorageService {
     }
 
     $url = sprintf(
-      'https://%s.file.core.usgovcloudapi.net/%s?%s',
+      'https://%s.blob.core.usgovcloudapi.net/%s?%s',
       rawurlencode($account),
       rawurlencode($container),
       http_build_query($queryParams)
@@ -157,7 +157,7 @@ final class AzureBlobStorageService {
     ];
 
     return sprintf(
-      'https://%s.file.core.usgovcloudapi.net/%s/%s?%s',
+      'https://%s.blob.core.usgovcloudapi.net/%s/%s?%s',
       rawurlencode($account),
       rawurlencode($container),
       implode('/', array_map('rawurlencode', explode('/', $blobName))),
