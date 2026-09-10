@@ -2,6 +2,9 @@ azure_storage_browser.settings:
   type: config_object
   label: 'Azure Storage Browser settings'
   mapping:
+    storage_backend:
+      type: string
+      label: 'Storage backend (blob or file_share)'
     azure_account_name:
       type: string
       label: 'Azure Storage Account Name'
@@ -14,15 +17,18 @@ azure_storage_browser.settings:
     azure_blob_prefix:
       type: string
       label: 'Blob Name Prefix'
+    azure_blob_endpoint:
+      type: string
+      label: 'Blob service endpoint override (local development only)'
+    azure_file_endpoint:
+      type: string
+      label: 'File service endpoint override (local development only)'
     azure_share_name:
       type: string
       label: 'Azure File Share Name'
     azure_directory_path:
       type: string
       label: 'Directory Path'
-    sas_token_expiry_minutes:
-      type: integer
-      label: 'SAS Token Expiry (minutes)'
     page_title:
       type: label
       label: 'Page Title'
