@@ -1,0 +1,18 @@
+{
+  "name": "azure-storage-mock",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Local mock of the Azure Files and Blob REST endpoints used by the Drupal azure_storage_browser module.",
+  "license": "proprietary",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "start": "node server.js",
+    "start:verbose": "node server.js --verbose",
+    "fixtures": "node make-fixtures.js",
+    "fixtures:bulk": "node make-fixtures.js --bulk-blobs 5500",
+    "test": "php test/production-url-parity.php && php test/signing-parity.php && php test/blob-pagination.php",
+    "test:pagination": "php test/blob-pagination.php"
+  }
+}
