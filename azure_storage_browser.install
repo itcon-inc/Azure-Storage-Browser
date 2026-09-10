@@ -1,0 +1,59 @@
+<?php
+
+/**
+ * @file
+ * Install and update hooks for Azure Storage Browser.
+ */
+
+declare(strict_types=1);
+
+/**
+ * Adds storage_backend and the endpoint override settings.
+ *
+ * config/install only applies at install time, so sites that already have the
+ * module need the new keys backfilled. storage_backend gets the module default
+ * (see AzureStorageBackendResolver::DEFAULT_BACKEND), the same value a fresh
+ * install gets.
+ */
+function azure_storage_browser_update_11001(): string {
+  $config = \Drupal::configFactory()->getEditable('azure_storage_browser.settings');
+  $added = [];
+
+  foreach ([
+    'storage_backend' => \Drupal\azure_storage_browser\AzureStorageBackendResolver::DEFAULT_BACKEND,
+    'azure_blob_endpoint' => '',
+    'azure_file_endpoint' => '',
+  ] as $key => $default) {
+    if ($config->get($key) === NULL) {
+      $config->set($key, $default);
+      $added[] = $key;
+    }
+  }
+
+  if ($added === []) {
+    return 'All settings already present; no change.';
+  }
+
+  $config->save();
+
+  return 'Added: ' . implode(', ', $added) . '.';
+}
+
+/**
+ * Removes the unused sas_token_expiry_minutes setting.
+ *
+ * Downloads have been proxied through Drupal since the module stopped issuing
+ * SAS URLs, so nothing has read this value for some time. The form field and
+ * its validation are gone; this clears the stored key to match.
+ */
+function azure_storage_browser_update_11002(): string {
+  $config = \Drupal::configFactory()->getEditable('azure_storage_browser.settings');
+
+  if ($config->get('sas_token_expiry_minutes') === NULL) {
+    return 'sas_token_expiry_minutes already absent; no change.';
+  }
+
+  $config->clear('sas_token_expiry_minutes')->save();
+
+  return 'Removed the unused sas_token_expiry_minutes setting.';
+}

@@ -4,11 +4,12 @@ declare(strict_types=1);
 
 namespace Drupal\azure_storage_browser\Controller;
 
-use Drupal\azure_storage_browser\AzureBlobStorageService;
+use Drupal\azure_storage_browser\AzureStorageBackendResolver;
 use Drupal\azure_storage_browser\AzureStorageDisplayHelpersTrait;
-use Drupal\Core\Config\ConfigFactoryInterface;
+use Drupal\Core\Config\ImmutableConfig;
 use Drupal\Core\Controller\ControllerBase;
 use Drupal\Core\Url;
+use Psr\Log\LoggerInterface;
 use Symfony\Component\DependencyInjection\ContainerInterface;
 use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\HttpFoundation\Response;
@@ -17,39 +18,38 @@ use Symfony\Component\HttpKernel\Exception\AccessDeniedHttpException;
 use Symfony\Component\HttpKernel\Exception\NotFoundHttpException;
 
 /**
- * Controller for the Azure Blob Storage browser pages.
+ * Browse and download pages for the configured Azure storage backend.
+ *
+ * Backend-agnostic: it talks to whichever of Blob Storage or Azure Files the
+ * `storage_backend` setting selects, via the resolver. Both present the same
+ * flat list of files, so one controller serves either.
  */
 class AzureStorageBrowserController extends ControllerBase {
 
   use AzureStorageDisplayHelpersTrait;
 
-  public $azureService;
-  public $settings;
-
-  /**
-   * Constructs an AzureStorageBrowserController object.
-   *
-   * @param \Drupal\storage_brwoser\AzureBlobStorageService $azureService
-   *   The module handler.
-   * @param \Drupal\Core\Config\ConfigFactoryInterface $configFactory
-   *   The config factory.
-   */
   public function __construct(
-    AzureBlobStorageService $azureService,
-    ConfigFactoryInterface $configFactory,
-  ) {
-    $this->azureService = $azureService;
-    $this->settings = $configFactory->get('azure_storage_browser.settings');
-  }
+    private readonly AzureStorageBackendResolver $backend,
+    private readonly LoggerInterface $logger,
+  ) {}
 
   /**
    * {@inheritdoc}
    */
   public static function create(ContainerInterface $container): static {
     return new static(
-      $container->get('azure_storage_browser.blob_storage'),
-      $container->get('config.factory'),
+      $container->get('azure_storage_browser.backend'),
+      $container->get('logger.channel.azure_storage_browser'),
     );
+  }
+
+  /**
+   * Returns the settings for this module.
+   */
+  private function settings(): ImmutableConfig {
+    // ControllerBase::config() resolves through config.factory, so settings.php
+    // overrides apply.
+    return $this->config('azure_storage_browser.settings');
   }
 
   // ---------------------------------------------------------------------------
@@ -57,18 +57,26 @@ class AzureStorageBrowserController extends ControllerBase {
   // ---------------------------------------------------------------------------
 
   /**
+   * Title callback, so the configured page title is actually used.
+   */
+  public function title(): string {
+    $title = trim((string) ($this->settings()->get('page_title') ?? ''));
+    return $title !== '' ? $title : (string) $this->t('Available Files');
+  }
+
+  /**
    * Renders the file listing page.
    */
   public function listFiles(): array {
-    $config         = $this->settings;
-    $showSize       = (bool) $config->get('show_file_size');
-    $showModified   = (bool) $config->get('show_last_modified');
-    $rawExtensions  = (string) ($config->get('allowed_extensions') ?? '');
-    $allowedExtensions = $this->parseExtensions($rawExtensions);
+    $config            = $this->settings();
+    $showSize          = (bool) $config->get('show_file_size');
+    $showModified      = (bool) $config->get('show_last_modified');
+    $allowedExtensions = $this->parseExtensions((string) ($config->get('allowed_extensions') ?? ''));
 
-    // Attempt to list blobs; surface configuration errors gracefully.
+    // Surface configuration and connectivity errors as a message rather than a
+    // white screen — this is only a browse page.
     try {
-      $blobs = $this->azureService->listBlobs();
+      $files = $this->backend->get()->listFiles();
     }
     catch (\RuntimeException $e) {
       $this->messenger()->addError($this->t(
@@ -78,21 +86,17 @@ class AzureStorageBrowserController extends ControllerBase {
       return ['#markup' => ''];
     }
 
-    // Filter by allowed extensions if configured.
     if ($allowedExtensions !== []) {
-      $blobs = array_values(array_filter(
-        $blobs,
-        fn(array $b) => in_array($this->fileExtension($b['name']), $allowedExtensions, true)
+      $files = array_values(array_filter(
+        $files,
+        fn(array $f) => in_array($this->fileExtension($f['name']), $allowedExtensions, true)
       ));
     }
 
-    if ($blobs === []) {
-      return [
-        '#markup' => $this->t('No files are currently available.'),
-      ];
+    if ($files === []) {
+      return ['#markup' => $this->t('No files are currently available.')];
     }
 
-    // Build table header.
     $header = [$this->t('File Name')];
     if ($showSize) {
       $header[] = $this->t('Size');
@@ -102,37 +106,29 @@ class AzureStorageBrowserController extends ControllerBase {
     }
     $header[] = $this->t('Action');
 
-    // Build table rows.
     $rows = [];
-    foreach ($blobs as $blob) {
-      $downloadUrl = Url::fromRoute(
-        'azure_storage_browser.download',
-        ['blob' => base64_encode($blob['name'])],
-        ['absolute' => FALSE]
-      );
-
-      $row = [
-        // Display just the filename portion, but use the full blob name for
-        // the download route so virtual-directory paths work correctly.
-        ['data' => $this->formatDisplayName($blob['name'])],
-      ];
+    foreach ($files as $file) {
+      // Display the filename, but route on the full path so files in
+      // subdirectories resolve correctly.
+      $row = [['data' => $this->formatDisplayName($file['name'])]];
 
       if ($showSize) {
-        $row[] = ['data' => $this->formatBytes($blob['size'])];
+        $row[] = ['data' => $this->formatBytes($file['size'])];
       }
-
       if ($showModified) {
-        $row[] = ['data' => $this->formatDate($blob['last_modified'])];
+        $row[] = ['data' => $this->formatDate($file['last_modified'])];
       }
 
       $row[] = [
         'data' => [
           '#type'  => 'link',
           '#title' => $this->t('Download'),
-          '#url'   => $downloadUrl,
-          '#attributes' => [
-            'class' => ['button', 'button--small'],
-          ],
+          '#url'   => Url::fromRoute(
+            'azure_storage_browser.download',
+            ['file' => base64_encode($file['name'])],
+            ['absolute' => FALSE]
+          ),
+          '#attributes' => ['class' => ['button', 'button--small']],
         ],
       ];
 
@@ -145,50 +141,44 @@ class AzureStorageBrowserController extends ControllerBase {
       '#rows'       => $rows,
       '#attributes' => ['class' => ['azure-storage-browser__table']],
       '#empty'      => $this->t('No files found.'),
-      '#attached'   => [
-        'library' => ['azure_storage_browser/styles'],
-      ],
+      '#attached'   => ['library' => ['azure_storage_browser/styles']],
       '#cache'      => [
-        // Do not cache the listing; blobs change frequently.
+        // Do not cache the listing; files change frequently.
         'max-age' => 0,
       ],
     ];
   }
 
   /**
-   * Streams a blob's content back to the client through the Drupal server.
+   * Streams a file's content back to the client through the Drupal server.
    *
-   * The download is proxied rather than redirecting the browser to a SAS
-   * URL, so only the Drupal server needs network access to the storage
-   * account — important when the account's firewall is restricted to
-   * specific IP ranges that don't (and can't reliably) include end-user
-   * browsers.
+   * The download is proxied rather than redirecting the browser to a SAS URL,
+   * so only the Drupal server needs network access to the storage account —
+   * important when the account's firewall is restricted to IP ranges that
+   * don't (and can't reliably) include end-user browsers.
    *
-   * The blob name is passed as a base64-encoded route parameter to safely
-   * handle blobs whose names contain slashes or special characters.
+   * The path is a base64-encoded route parameter so paths containing slashes
+   * or special characters survive routing intact.
    */
-  public function downloadFile(Request $request, string $blob): Response {
-    // Decode and validate the blob name.
-    $blobName = base64_decode($blob, strict: true);
-    if ($blobName === false || $blobName === '') {
+  public function downloadFile(Request $request, string $file): Response {
+    $path = base64_decode($file, strict: true);
+    if ($path === false || $path === '') {
       throw new NotFoundHttpException();
     }
 
-    // Extension guard: re-check against allowed list on the server side.
-    $config = $this->settings;
-    $rawExtensions = (string) ($config->get('allowed_extensions') ?? '');
-    $allowedExtensions = $this->parseExtensions($rawExtensions);
-
+    // Re-check the extension server-side: the listing filter is not a control.
+    $allowedExtensions = $this->parseExtensions((string) ($this->settings()->get('allowed_extensions') ?? ''));
     if ($allowedExtensions !== [] &&
-        !in_array($this->fileExtension($blobName), $allowedExtensions, true)) {
+        !in_array($this->fileExtension($path), $allowedExtensions, true)) {
       throw new AccessDeniedHttpException('This file type is not permitted for download.');
     }
 
-    // Fail fast (with a friendly redirect) on the common misconfiguration
-    // case, before committing to a streamed response whose headers can't
-    // be changed once sent.
+    $backend = $this->backend->get();
+
+    // Fail fast on the common misconfiguration case, before committing to a
+    // streamed response whose headers can't be changed once sent.
     try {
-      $this->azureService->assertConfigured();
+      $backend->assertConfigured();
     }
     catch (\RuntimeException $e) {
       $this->messenger()->addError($this->t(
@@ -198,22 +188,21 @@ class AzureStorageBrowserController extends ControllerBase {
       return $this->redirect('azure_storage_browser.list');
     }
 
-    $azureService = $this->azureService;
-    $filename = basename($blobName);
+    $logger = $this->logger;
 
-    $response = new StreamedResponse(function () use ($azureService, $blobName): void {
+    $response = new StreamedResponse(function () use ($backend, $path, $logger): void {
       $destination = fopen('php://output', 'wb');
       try {
-        $azureService->downloadBlob($blobName, $destination);
+        $backend->downloadFile($path, $destination);
       }
       catch (\RuntimeException $e) {
-        // Headers are already committed by the time this callback runs, so
-        // a clean error page/redirect isn't possible here. Log it for site
-        // admins and leave a short message in the response body.
-        \Drupal::logger('azure_storage_browser')->error(
-          'Blob download failed for @blob: @message',
-          ['@blob' => $blobName, '@message' => $e->getMessage()]
-        );
+        // Headers are already committed by the time this callback runs, so a
+        // clean error page isn't possible. Log it for admins and leave a short
+        // message in the body.
+        $logger->error('Download failed for @file: @message', [
+          '@file'    => $path,
+          '@message' => $e->getMessage(),
+        ]);
         echo 'Download failed: ' . $e->getMessage();
       }
       finally {
@@ -222,7 +211,7 @@ class AzureStorageBrowserController extends ControllerBase {
     });
 
     $response->headers->set('Content-Type', 'application/octet-stream');
-    $response->headers->set('Content-Disposition', 'attachment; filename="' . addslashes($filename) . '"');
+    $response->headers->set('Content-Disposition', 'attachment; filename="' . addslashes(basename($path)) . '"');
     $response->headers->set('Cache-Control', 'no-store, no-cache');
 
     return $response;

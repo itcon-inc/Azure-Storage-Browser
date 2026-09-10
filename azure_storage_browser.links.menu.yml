@@ -1,20 +1,13 @@
 azure_storage_browser.list:
   title: 'Azure Storage Browser'
-  description: 'Browse and download files from Azure Blob Storage.'
+  description: 'Browse and download files from the configured Azure storage account.'
   route_name: azure_storage_browser.list
   parent: system.admin_config_services
   weight: 50
 
-azure_storage_browser.file_share.list:
-  title: 'Azure File Share Browser'
-  description: 'Browse and download files from an Azure Files (classic file share).'
-  route_name: azure_storage_browser.file_share.list
-  parent: system.admin_config_services
-  weight: 51
-
 azure_storage_browser.settings:
   title: 'Azure Storage Settings'
-  description: 'Configure Azure Blob Storage credentials and container settings.'
+  description: 'Configure the Azure storage backend, credentials and display settings.'
   route_name: azure_storage_browser.settings
   parent: system.admin_config_services
-  weight: 50
+  weight: 51

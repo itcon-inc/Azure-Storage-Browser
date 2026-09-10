@@ -18,6 +18,58 @@ namespace Drupal\azure_storage_browser;
 trait AzureRestClientTrait {
 
   /**
+   * Builds a request URL for one of the storage services.
+   *
+   * Production uses host-style URLs, where the account and service are part of
+   * the hostname:
+   *
+   *   https://{account}.{service}.core.usgovcloudapi.net/{share}/{path}
+   *
+   * When an endpoint override is configured — local development against the
+   * mock server in tools/azure-storage-mock — path-style is used instead, with
+   * the account as the first path segment, as Azurite does:
+   *
+   *   http://localhost:10001/{account}/{share}/{path}
+   *
+   * Either way the signed canonicalised resource is /{account}/{share}/{path},
+   * so signing is unaffected by which form is in use.
+   *
+   * @param string $account
+   *   The storage account name.
+   * @param string $service
+   *   Either 'file' or 'blob'.
+   * @param string $path
+   *   The resource path, beginning with a slash and NOT url-encoded, e.g.
+   *   '/myshare/backups/db dump.sql'. Each segment is encoded here.
+   * @param array<string, string> $queryParams
+   *   Query parameters to append, if any.
+   * @param string $endpointOverride
+   *   Base URL to use instead of the production endpoint, or '' for production.
+   */
+  private function buildUrl(
+    string $account,
+    string $service,
+    string $path,
+    array $queryParams = [],
+    string $endpointOverride = '',
+  ): string {
+    $encodedPath = implode('/', array_map('rawurlencode', explode('/', $path)));
+    $query = $queryParams === [] ? '' : '?' . http_build_query($queryParams);
+
+    if ($endpointOverride !== '') {
+      return rtrim($endpointOverride, '/') . '/' . rawurlencode($account) . $encodedPath . $query;
+    }
+
+    return sprintf(
+      'https://%s.%s.core.usgovcloudapi.net%s%s',
+      rawurlencode($account),
+      $service,
+      $encodedPath,
+      $query
+    );
+  }
+
+  /**
    * Builds the Authorization header value for Shared Key authentication.
    */
   private function buildSharedKeyAuth(string $account, string $key, string $stringToSign): string {
@@ -92,10 +144,11 @@ trait AzureRestClientTrait {
       CURLOPT_SSL_VERIFYPEER => true,
     ]);
 
+    // No curl_close(): it has been a no-op since PHP 8.0 and is deprecated as
+    // of 8.5. The handle is released when $ch goes out of scope.
     $body   = curl_exec($ch);
     $status = curl_getinfo($ch, CURLINFO_HTTP_CODE);
     $error  = curl_error($ch);
-    curl_close($ch);
 
     if ($body === false || $error !== '') {
       throw new \RuntimeException("cURL error contacting Azure: {$error}");
@@ -171,7 +224,6 @@ trait AzureRestClientTrait {
     $ok = curl_exec($ch);
     $curlError = curl_error($ch);
     $finalStatus = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
-    curl_close($ch);
 
     if ($ok === false || $curlError !== '') {
       throw new \RuntimeException("cURL error contacting Azure: {$curlError}");

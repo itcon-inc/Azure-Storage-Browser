@@ -1,20 +1,26 @@
-# Azure Storage  Browser
+# Azure Storage Browser
 
-A Drupal 11 / PHP 8.4 module that lists files in an Azure Blob Storage container
-as download links. Downloads are served via time-limited **Shared Access 
-Signature (SAS)** URLs — the storage account key is never exposed to end-users 
-or embedded in links.
+A Drupal 11 module that lists files in Azure storage as download links — for
+example nightly database backups — with configurable credentials, filtering and
+permissions.
 
----
+It talks to **either** of two Azure services, selected by configuration:
 
-## Features
+| Backend | Azure service | Account kind |
+|---|---|---|
+| `blob` | Blob Storage | StorageV2 (general purpose v2) |
+| `file_share` | Azure Files | FileStorage (premium files), or Files on StorageV2 |
 
-- Lists blobs from a configurable Azure container with optional prefix filtering
-- Filters by file extension (e.g. show only `.bak`, `.sql`, `.zip`)
-- Generates per-click, time-limited SAS download URLs (configurable expiry)
-- Two granular permissions: *view list* and *administer settings*
-- Pure REST API implementation — **no external PHP SDK required**
-- Configurable display columns (file size, last modified)
+A storage account is only ever one kind — a FileStorage account has no blob
+endpoint at all — so one site talks to one backend. Set `storage_backend` to say
+which, typically overridden per environment in `settings.php`.
+
+`storage_backend` **defaults to `file_share`**, because Azure Files is the one
+service every account kind offers. Set it to `blob` only for a StorageV2 account
+whose files live in a blob container.
+
+Pure REST implementation using **Shared Key** authentication. No Azure SDK or
+Composer package required.
 
 ---
 
@@ -26,108 +32,137 @@ or embedded in links.
 | PHP | ≥ 8.4 |
 | PHP extensions | `curl`, `openssl`, `simplexml` |
 
----
+The storage account must permit Shared Key access. If `allowSharedKeyAccess` is
+disabled — increasingly common in hardened environments — this module cannot
+authenticate, and would need Entra ID / OAuth support instead.
 
-## Installation
-
-```bash
-# Copy the module into your Drupal installation
-cp -r azure_storage_browser web/modules/custom/
-
-# Enable the module
-drush en azure_storage_browser -y
-
-# (optional) clear caches
-drush cr
-```
+An Azure Files share must be **SMB**. NFS 4.1 shares have no REST data plane and
+cannot be browsed this way.
 
 ---
 
 ## Configuration
 
-Navigate to **Administration → Configuration → Services → Azure Storage Browser**
+**Administration → Configuration → Services → Azure Storage Settings**
 (`/admin/config/azure-storage-browser`).
 
-### Required settings
-
-| Setting | Description |
-|---|---|
-| **Storage Account Name** | Your Azure storage account name (e.g. `mystorageaccount`) |
-| **Storage Account Key** | Primary or secondary access key (base64-encoded, 88 chars) |
-| **Container Name** | The blob container to list (e.g. `db-backups`) |
-
-### Optional settings
-
-| Setting | Default | Description |
+| Setting | Applies to | Description |
 |---|---|---|
-| Blob Prefix | *(empty)* | Virtual directory filter, e.g. `backups/prod/` |
-| Allowed Extensions | `bak,sql,zip,gz,tar` | Leave blank to show all blobs |
-| SAS Token Expiry | `60` minutes | How long download links remain valid |
-| Show File Size | ✓ | Display a Size column |
-| Show Last Modified | ✓ | Display a Last Modified column |
+| **Storage backend** | both | `file_share` (default) or `blob` |
+| **Storage Account Name** | both | e.g. `mystorageaccount` |
+| **Storage Account Key** | both | Primary or secondary access key (base64) |
+| Container Name | blob | The blob container to list |
+| Blob Name Prefix | blob | Optional filter, e.g. `backups/prod/` |
+| File Share Name | file_share | The file share to list |
+| Directory Path | file_share | Optional subdirectory; listed recursively |
+| Allowed Extensions | both | e.g. `bak,sql,zip,gz`. Blank shows everything |
+| Page Title | both | Heading on the listing page |
+| Show File Size / Last Modified | both | Optional table columns |
 
-### Storing the key securely (recommended for production)
+The form shows only the group belonging to the selected backend.
 
-Override the config in `settings.php` so the key is never stored in the
-Drupal database:
+### Production configuration
+
+Override in `settings.php` so credentials never live in the database or in
+exported config:
 
 ```php
-// web/sites/default/settings.php
+$config['azure_storage_browser.settings']['storage_backend'] = 'file_share';
 $config['azure_storage_browser.settings']['azure_account_name'] = 'mystorageaccount';
-$config['azure_storage_browser.settings']['azure_account_key']  = 'BASE64_KEY_HERE==';
-$config['azure_storage_browser.settings']['azure_container_name'] = 'db-backups';
+$config['azure_storage_browser.settings']['azure_account_key'] = 'BASE64_KEY_HERE==';
+$config['azure_storage_browser.settings']['azure_share_name'] = 'db-backups';
 ```
+
+Anything set this way is shown in the settings form as read-only, with a notice
+saying it comes from `settings.php`.
 
 ---
 
 ## Permissions
 
-| Permission | Machine name | Purpose |
-|---|---|---|
-| Access Azure Storage Browser | `access azure storage browser` | View the file list and generate download links |
-| Administer Azure Storage Browser | `administer azure storage browser` | Change credentials and settings |
+| Permission | Machine name |
+|---|---|
+| Access Azure Storage Browser | `access azure storage browser` |
+| Administer Azure Storage Browser | `administer azure storage browser` |
 
-Grant these at **Administration → People → Permissions** (`/admin/people/permissions`).
+Both are marked restricted. Grant at `/admin/people/permissions`.
 
 ---
 
 ## How downloads work
 
-1. User clicks **Download** next to a file.
-2. Drupal generates a SAS URL signed with HMAC-SHA256 using the account key.
-3. The user is 302-redirected to the SAS URL on Azure's CDN/origin.
-4. Azure validates the signature and streams the file directly to the browser.
-5. The SAS URL expires after the configured number of minutes.
+Downloads are **proxied through the Drupal server**, streamed rather than
+buffered:
 
-The storage account key is **never** included in the URL or sent to the browser.
+1. The user clicks Download.
+2. Drupal requests the object from Azure, signing with the account key.
+3. The bytes are streamed straight through to the browser.
+
+The account key is never exposed to the browser, and no SAS URL is generated.
+This matters when the storage account's firewall is restricted to specific IP
+ranges or a VNet: only the Drupal server needs network access, not the end
+user's browser.
+
+The extension filter is re-checked server-side on download, so it is a real
+control rather than a display filter.
 
 ---
 
-## Azure Blob Service REST API
+## Local development
 
-This module talks directly to the
-[Azure Blob Service REST API](https://learn.microsoft.com/en-us/rest/api/storageservices/blob-service-rest-api)
-using **Shared Key** authentication and **Service SAS** tokens.
-No Azure SDK or Composer package is required.
+`tools/azure-storage-mock` is a dependency-free Node mock of both Azure REST
+services, with test suites that validate this module's request signing against
+an independently spec-derived implementation. Azurite does not implement the
+Files service, which is why it exists. See its README. This is located in testing branch.
 
-API version used: `2020-10-02`
+Point the module at it with the endpoint overrides — local development only:
+
+```php
+//Set these if you have the mock server running.
+$config['azure_storage_browser.settings']['azure_file_endpoint'] = 'http://azure-mock:10001';
+$config['azure_storage_browser.settings']['azure_blob_endpoint'] = 'http://azure-mock:10002';
+```
+
+
+Unset, the module builds production Government Cloud URLs
+(`{account}.file.core.usgovcloudapi.net`).
+
+---
+
+## Azure REST APIs used
+
+[Blob Service](https://learn.microsoft.com/en-us/rest/api/storageservices/blob-service-rest-api)
+and [File Service](https://learn.microsoft.com/en-us/rest/api/storageservices/file-service-rest-api),
+with [Shared Key](https://learn.microsoft.com/en-us/rest/api/storageservices/authorize-with-shared-key)
+authorization. API version `2020-10-02`.
+
+> `2022-04-01` looks like a plausible version but is an **ARM management-plane**
+> API version, not a data-plane one — the storage services reject it with
+> `InvalidHeaderValue`. There is no valid data-plane version between
+> `2021-12-02` and `2022-11-02`.
+
+Both listings follow `NextMarker` continuation, so containers and directories
+larger than one page list completely.
 
 ---
 
 ## Troubleshooting
 
-### "Azure Blob Storage returned an error: AuthenticationFailed"
-- Double-check the account name and key in settings.
-- Ensure the key is the raw base64 value (copy directly from the Azure Portal → Access Keys).
+**`AuthenticationFailed`**
+Check the account name and key; the key must be the raw base64 value from the
+Azure Portal. Also check the server clock — large skew invalidates the signed
+`x-ms-date`. Run the mock with `--verbose` to see the exact expected
+string-to-sign.
 
-### "AuthorizationResourceTypeMismatch"
-- Verify the container name is correct and the container exists.
+**`AuthorizationFailure` / connection timeouts**
+The storage account firewall is likely blocking the Drupal server. Allow-list
+its outbound IPs or put both on the same VNet.
 
-### No files listed
-- Check the blob prefix — if set, it must match the actual blob path prefix exactly.
-- Verify the allowed extensions list includes the extensions of your blobs.
+**`ContainerNotFound` / `ResourceNotFound`, or an empty listing**
+Usually the wrong backend for the account kind — a FileStorage account has no
+blob endpoint. Check `storage_backend`, then the container/share name, the
+prefix or directory path, and the allowed extensions list.
 
-### Downloads fail immediately after clicking
-- The SAS URL may have already expired. Increase the expiry minutes in settings.
-- Ensure the server clock is accurate (NTP sync). Azure rejects SAS tokens
-  with a start time more than 15 minutes in the future.
+**Listing is slow on a file share**
+Azure Files is hierarchical and is walked recursively, one request per
+directory. Set a Directory Path to bound the traversal.

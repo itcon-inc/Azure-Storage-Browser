@@ -1,5 +1,5 @@
 name: 'Azure Storage Browser'
-description: 'Displays a list of Azure Blob Storage and/or Azure File Share files (e.g. database backups) as downloadable links, with configurable credentials and access permissions.'
+description: 'Browse and download files from Azure Blob Storage or Azure Files (e.g. database backups). The backend is selected by configuration; downloads are proxied through Drupal.'
 package: 'Custom'
 type: module
 core_version_requirement: ^11

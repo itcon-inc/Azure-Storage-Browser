@@ -1,9 +1,26 @@
 services:
+  logger.channel.azure_storage_browser:
+    parent: logger.channel_base
+    arguments:
+      - 'azure_storage_browser'
+
   azure_storage_browser.blob_storage:
     class: Drupal\azure_storage_browser\AzureBlobStorageService
     arguments:
       - '@config.factory'
+
   azure_storage_browser.file_share:
     class: Drupal\azure_storage_browser\AzureFileShareService
     arguments:
       - '@config.factory'
+
+  # Resolves which of the two backends above is in use, from the
+  # storage_backend setting. Controllers depend on this, not on the
+  # concrete services.
+  azure_storage_browser.backend:
+    class: Drupal\azure_storage_browser\AzureStorageBackendResolver
+    arguments:
+      - '@azure_storage_browser.blob_storage'
+      - '@azure_storage_browser.file_share'
+      - '@config.factory'
+      - '@logger.channel.azure_storage_browser'

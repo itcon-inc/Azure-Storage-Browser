@@ -21,7 +21,7 @@ use Drupal\Core\StringTranslation\StringTranslationTrait;
  * to the storage account — useful when the account's firewall restricts
  * access to specific IP ranges that don't include end-user browsers.
  */
-final class AzureFileShareService {
+final class AzureFileShareService implements AzureStorageBackendInterface {
 
   use StringTranslationTrait;
   use AzureRestClientTrait;
@@ -35,16 +35,10 @@ final class AzureFileShareService {
   // ---------------------------------------------------------------------------
 
   /**
-   * Returns a flattened list of file metadata from the configured share.
+   * {@inheritdoc}
    *
-   * Each item contains:
-   *   - name          (string) full path within the share, e.g. "backups/db.sql"
-   *   - size           (int)    content length in bytes
-   *   - last_modified  (string) RFC 1123 date string
-   *
-   * @return list<array{name:string,size:int,last_modified:string}>
-   *
-   * @throws \RuntimeException on HTTP or XML parse errors.
+   * Azure Files is hierarchical, so the configured directory is walked
+   * recursively to produce the flat list the interface promises.
    */
   public function listFiles(): array {
     $config = $this->getConfig();
@@ -54,37 +48,22 @@ final class AzureFileShareService {
   }
 
   /**
-   * Downloads a file's content, streaming it directly to $destination.
-   *
-   * @param string $filePath
-   *   The full file path within the share, as returned by listFiles().
-   * @param resource $destination
-   *   A writable stream, e.g. fopen('php://output', 'wb').
-   *
-   * @return array{content_type: string, content_length: ?int}
-   *   Metadata about the downloaded file, taken from Azure's response
-   *   headers.
-   *
-   * @throws \RuntimeException on HTTP or cURL errors.
+   * {@inheritdoc}
    */
-  public function downloadFile(string $filePath, $destination): array {
+  public function downloadFile(string $path, $destination): array {
     $config  = $this->getConfig();
     $account = $config['account_name'];
     $share   = $config['share_name'];
 
-    $encodedPath = implode('/', array_map('rawurlencode', explode('/', $filePath)));
-    $resourcePath = '/' . $share . '/' . ltrim($filePath, '/');
-
-    $url = sprintf(
-      'https://%s.file.core.usgovcloudapi.net/%s/%s',
-      rawurlencode($account),
-      rawurlencode($share),
-      $encodedPath
-    );
+    $resourcePath = '/' . $share . '/' . ltrim($path, '/');
+    $url = $this->buildUrl($account, 'file', $resourcePath, [], $config['endpoint']);
 
     $date = $this->utcDate();
     $headers = [
       'x-ms-date'    => $date,
+      // Do NOT "align" this with the Blob service's 2022-04-01: the Files
+      // service rejects that version outright with InvalidHeaderValue on the
+      // nesrvaprdsa account. Verified against the real account 2026-09-09.
       'x-ms-version' => '2020-10-02',
     ];
 
@@ -114,11 +93,7 @@ final class AzureFileShareService {
   }
 
   /**
-   * Validates that the required settings are present, without making any
-   * network calls. Lets callers fail fast (e.g. redirect with a friendly
-   * message) before committing to a streamed HTTP response.
-   *
-   * @throws \RuntimeException if required settings are missing.
+   * {@inheritdoc}
    */
   public function assertConfigured(): void {
     $this->getConfig();
@@ -135,7 +110,7 @@ final class AzureFileShareService {
    * immediate children of a directory (similar to a filesystem `ls`), so
    * subdirectories must be walked individually to build a flat file list.
    *
-   * @param array{account_name:string,account_key:string,share_name:string,directory_path:string,sas_expiry_minutes:int} $config
+   * @param array{account_name:string,account_key:string,share_name:string,directory_path:string,endpoint:string} $config
    *
    * @return list<array{name:string,size:int,last_modified:string}>
    */
@@ -169,7 +144,7 @@ final class AzureFileShareService {
    * Calls "List Directories and Files" for a single directory, following
    * continuation markers until the full listing for that directory is read.
    *
-   * @param array{account_name:string,account_key:string,share_name:string,directory_path:string,sas_expiry_minutes:int} $config
+   * @param array{account_name:string,account_key:string,share_name:string,directory_path:string,endpoint:string} $config
    *
    * @return array{files: list<array{name:string,size:int,last_modified:string}>, directories: list<string>}
    */
@@ -193,16 +168,12 @@ final class AzureFileShareService {
 
       $resourcePath = '/' . $share . ($directoryPath !== '' ? '/' . $directoryPath : '');
 
-      $url = sprintf(
-        'https://%s.file.core.usgovcloudapi.net%s?%s',
-        rawurlencode($account),
-        $this->encodePath($resourcePath),
-        http_build_query($queryParams)
-      );
+      $url = $this->buildUrl($account, 'file', $resourcePath, $queryParams, $config['endpoint']);
 
       $date = $this->utcDate();
       $headers = [
         'x-ms-date'    => $date,
+        // See the note in downloadFile(): 2022-04-01 is rejected here.
         'x-ms-version' => '2020-10-02',
       ];
 
@@ -242,7 +213,7 @@ final class AzureFileShareService {
   /**
    * Returns validated config values.
    *
-   * @return array{account_name:string,account_key:string,share_name:string,directory_path:string,sas_expiry_minutes:int}
+   * @return array{account_name:string,account_key:string,share_name:string,directory_path:string,endpoint:string}
    *
    * @throws \RuntimeException if required settings are missing.
    */
@@ -261,19 +232,14 @@ final class AzureFileShareService {
     }
 
     return [
-      'account_name'       => $account,
-      'account_key'        => $key,
-      'share_name'         => $share,
-      'directory_path'     => (string) ($cfg->get('azure_directory_path') ?? ''),
-      'sas_expiry_minutes' => (int)    ($cfg->get('sas_token_expiry_minutes') ?? 60),
+      'account_name'   => $account,
+      'account_key'    => $key,
+      'share_name'     => $share,
+      'directory_path' => (string) ($cfg->get('azure_directory_path') ?? ''),
+      // Local development only: points the service at the mock server in
+      // tools/azure-storage-mock. Empty means the production endpoint.
+      'endpoint'       => (string) ($cfg->get('azure_file_endpoint') ?? ''),
     ];
-  }
-
-  /**
-   * URL-encodes each segment of a resource path while preserving the slashes.
-   */
-  private function encodePath(string $path): string {
-    return implode('/', array_map('rawurlencode', explode('/', $path)));
   }
 
   /**

@@ -18,7 +18,7 @@ use Drupal\Core\StringTranslation\StringTranslationTrait;
  * to the storage account — useful when the account's firewall restricts
  * access to specific IP ranges that don't include end-user browsers.
  */
-final class AzureBlobStorageService {
+final class AzureBlobStorageService implements AzureStorageBackendInterface {
 
   use StringTranslationTrait;
   use AzureRestClientTrait;
@@ -32,108 +32,103 @@ final class AzureBlobStorageService {
   // ---------------------------------------------------------------------------
 
   /**
-   * Returns a list of blob metadata from the configured container.
+   * {@inheritdoc}
    *
-   * Each item contains:
-   *   - name   (string)  blob name
-   *   - size   (int)     content length in bytes
-   *   - last_modified (string) RFC 1123 date string
-   *   - content_type (string)
+   * Blob names are already full paths, so no traversal is needed — but a
+   * container with more blobs than `maxresults` is returned one page at a
+   * time, so the NextMarker continuation must be followed or the listing is
+   * silently truncated.
+   *
+   * Items also carry a `content_type` key, which callers may ignore.
    *
    * @return list<array{name:string,size:int,last_modified:string,content_type:string}>
-   *
-   * @throws \RuntimeException on HTTP or XML parse errors.
    */
-  public function listBlobs(): array {
-    $config  = $this->getConfig();
-    $account = $config['account_name'];
+  public function listFiles(): array {
+    $config    = $this->getConfig();
+    $account   = $config['account_name'];
     $container = $config['container_name'];
-    $prefix  = $config['blob_prefix'];
+    $prefix    = $config['blob_prefix'];
 
-    $queryParams = [
-      'restype' => 'container',
-      'comp'    => 'list',
-      'maxresults' => '5000',
-    ];
-    if ($prefix !== '') {
-      $queryParams['prefix'] = $prefix;
-    }
+    $blobs  = [];
+    $marker = NULL;
 
-    $url = sprintf(
-      'https://%s.blob.core.usgovcloudapi.net/%s?%s',
-      rawurlencode($account),
-      rawurlencode($container),
-      http_build_query($queryParams)
-    );
+    do {
+      $queryParams = [
+        'restype'    => 'container',
+        'comp'       => 'list',
+        'maxresults' => '5000',
+      ];
+      if ($prefix !== '') {
+        $queryParams['prefix'] = $prefix;
+      }
+      if ($marker !== NULL) {
+        $queryParams['marker'] = $marker;
+      }
 
-    $date = $this->utcDate();
-    $headers = [
-      'x-ms-date'    => $date,
-      'x-ms-version' => '2022-04-01',
-    ];
+      $url = $this->buildUrl($account, 'blob', '/' . $container, $queryParams, $config['endpoint']);
 
-    $canonicalisedHeaders = $this->canonicaliseHeaders($headers);
-    $canonicalisedResource = $this->canonicaliseResource($account, '/' . $container, $queryParams);
+      $date = $this->utcDate();
+      $headers = [
+        'x-ms-date'    => $date,
+        // 2020-10-02 is a real Storage *data plane* service version. The
+        // previous value here, 2022-04-01, is an ARM management-plane version
+        // (Microsoft.Storage/storageAccounts@2022-04-01) and is rejected by
+        // the data plane with InvalidHeaderValue — the blob backend never
+        // worked. Verified against the real account 2026-09-09.
+        'x-ms-version' => '2020-10-02',
+      ];
 
-    $stringToSign = implode("\n", [
-      'GET',   // HTTP Verb
-      '',      // Content-Encoding
-      '',      // Content-Language
-      '',      // Content-Length (empty for GET)
-      '',      // Content-MD5
-      '',      // Content-Type
-      '',      // Date (empty when x-ms-date is used)
-      '',      // If-Modified-Since
-      '',      // If-Match
-      '',      // If-None-Match
-      '',      // If-Unmodified-Since
-      '',      // Range
-      $canonicalisedHeaders,
-      $canonicalisedResource,
-    ]);
+      $canonicalisedHeaders = $this->canonicaliseHeaders($headers);
+      $canonicalisedResource = $this->canonicaliseResource($account, '/' . $container, $queryParams);
 
-    $headers['Authorization'] = $this->buildSharedKeyAuth($account, $config['account_key'], $stringToSign);
+      $stringToSign = implode("\n", [
+        'GET',   // HTTP Verb
+        '',      // Content-Encoding
+        '',      // Content-Language
+        '',      // Content-Length (empty for GET)
+        '',      // Content-MD5
+        '',      // Content-Type
+        '',      // Date (empty when x-ms-date is used)
+        '',      // If-Modified-Since
+        '',      // If-Match
+        '',      // If-None-Match
+        '',      // If-Unmodified-Since
+        '',      // Range
+        $canonicalisedHeaders,
+        $canonicalisedResource,
+      ]);
 
-    $response = $this->httpGet($url, $headers);
-    return $this->parseListBlobsXml($response);
+      $headers['Authorization'] = $this->buildSharedKeyAuth($account, $config['account_key'], $stringToSign);
+
+      $parsed = $this->parseListBlobsXml($this->httpGet($url, $headers));
+
+      $blobs  = array_merge($blobs, $parsed['blobs']);
+      $marker = $parsed['next_marker'] !== '' ? $parsed['next_marker'] : NULL;
+    } while ($marker !== NULL);
+
+    return $blobs;
   }
 
   /**
-   * Downloads a blob's content, streaming it directly to $destination.
-   *
-   * @param string $blobName
-   *   The full blob name as returned by listBlobs().
-   * @param resource $destination
-   *   A writable stream, e.g. fopen('php://output', 'wb').
-   *
-   * @return array{content_type: string, content_length: ?int}
-   *   Metadata about the downloaded blob, taken from Azure's response
-   *   headers.
-   *
-   * @throws \RuntimeException on HTTP or cURL errors.
+   * {@inheritdoc}
    */
-  public function downloadBlob(string $blobName, $destination): array {
+  public function downloadFile(string $path, $destination): array {
     $config    = $this->getConfig();
     $account   = $config['account_name'];
     $container = $config['container_name'];
 
-    $encodedPath = implode('/', array_map('rawurlencode', explode('/', $blobName)));
-
-    $url = sprintf(
-      'https://%s.blob.core.usgovcloudapi.net/%s/%s',
-      rawurlencode($account),
-      rawurlencode($container),
-      $encodedPath
-    );
+    $url = $this->buildUrl($account, 'blob', '/' . $container . '/' . $path, [], $config['endpoint']);
 
     $date = $this->utcDate();
     $headers = [
       'x-ms-date'    => $date,
-      'x-ms-version' => '2022-04-01',
+      // See the note in listFiles(): 2022-04-01 is an ARM version, not a
+      // data-plane one.
+      'x-ms-version' => '2020-10-02',
     ];
 
     $canonicalisedHeaders = $this->canonicaliseHeaders($headers);
-    $canonicalisedResource = $this->canonicaliseResource($account, '/' . $container . '/' . $blobName);
+    $canonicalisedResource = $this->canonicaliseResource($account, '/' . $container . '/' . $path);
 
     $stringToSign = implode("\n", [
       'GET',   // HTTP Verb
@@ -158,11 +153,7 @@ final class AzureBlobStorageService {
   }
 
   /**
-   * Validates that the required settings are present, without making any
-   * network calls. Lets callers fail fast (e.g. redirect with a friendly
-   * message) before committing to a streamed HTTP response.
-   *
-   * @throws \RuntimeException if required settings are missing.
+   * {@inheritdoc}
    */
   public function assertConfigured(): void {
     $this->getConfig();
@@ -175,7 +166,7 @@ final class AzureBlobStorageService {
   /**
    * Returns validated config values.
    *
-   * @return array{account_name:string,account_key:string,container_name:string,blob_prefix:string,sas_expiry_minutes:int}
+   * @return array{account_name:string,account_key:string,container_name:string,blob_prefix:string,endpoint:string}
    *
    * @throws \RuntimeException if required settings are missing.
    */
@@ -194,18 +185,20 @@ final class AzureBlobStorageService {
     }
 
     return [
-      'account_name'      => $account,
-      'account_key'       => $key,
-      'container_name'    => $container,
-      'blob_prefix'       => (string) ($cfg->get('azure_blob_prefix') ?? ''),
-      'sas_expiry_minutes'=> (int)    ($cfg->get('sas_token_expiry_minutes') ?? 60),
+      'account_name'   => $account,
+      'account_key'    => $key,
+      'container_name' => $container,
+      'blob_prefix'    => (string) ($cfg->get('azure_blob_prefix') ?? ''),
+      // Local development only: points the service at the mock server in
+      // tools/azure-storage-mock. Empty means the production endpoint.
+      'endpoint'       => (string) ($cfg->get('azure_blob_endpoint') ?? ''),
     ];
   }
 
   /**
-   * Parses the List Blobs XML response into a structured array.
+   * Parses the List Blobs XML response.
    *
-   * @return list<array{name:string,size:int,last_modified:string,content_type:string}>
+   * @return array{blobs: list<array{name:string,size:int,last_modified:string,content_type:string}>, next_marker: string}
    */
   private function parseListBlobsXml(string $xml): array {
     $prev = libxml_use_internal_errors(true);
@@ -225,7 +218,10 @@ final class AzureBlobStorageService {
         'content_type'  => (string) $blob->Properties->{'Content-Type'},
       ];
     }
-    return $blobs;
+    return [
+      'blobs'       => $blobs,
+      'next_marker' => (string) ($doc->NextMarker ?? ''),
+    ];
   }
 
 }
