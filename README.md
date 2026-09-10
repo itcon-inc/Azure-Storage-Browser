@@ -15,6 +15,10 @@ A storage account is only ever one kind — a FileStorage account has no blob
 endpoint at all — so one site talks to one backend. Set `storage_backend` to say
 which, typically overridden per environment in `settings.php`.
 
+`storage_backend` **defaults to `file_share`**, because Azure Files is the one
+service every account kind offers. Set it to `blob` only for a StorageV2 account
+whose files live in a blob container.
+
 Pure REST implementation using **Shared Key** authentication. No Azure SDK or
 Composer package required.
 
@@ -44,7 +48,7 @@ cannot be browsed this way.
 
 | Setting | Applies to | Description |
 |---|---|---|
-| **Storage backend** | both | `blob` or `file_share` |
+| **Storage backend** | both | `file_share` (default) or `blob` |
 | **Storage Account Name** | both | e.g. `mystorageaccount` |
 | **Storage Account Key** | both | Primary or secondary access key (base64) |
 | Container Name | blob | The blob container to list |
@@ -109,7 +113,7 @@ control rather than a display filter.
 `tools/azure-storage-mock` is a dependency-free Node mock of both Azure REST
 services, with test suites that validate this module's request signing against
 an independently spec-derived implementation. Azurite does not implement the
-Files service, which is why it exists. See its README.
+Files service, which is why it exists. See its README. This is located in testing branch.
 
 Point the module at it with the endpoint overrides — local development only:
 

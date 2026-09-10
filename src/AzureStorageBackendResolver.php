@@ -21,6 +21,15 @@ final class AzureStorageBackendResolver {
   public const BACKEND_BLOB = 'blob';
   public const BACKEND_FILE_SHARE = 'file_share';
 
+  /**
+   * Used when storage_backend is unset or unrecognised.
+   *
+   * Azure Files, because it is the one backend every account kind can serve:
+   * a FileStorage account exposes only the Files service, and a StorageV2
+   * account exposes Files as well as Blob.
+   */
+  public const DEFAULT_BACKEND = self::BACKEND_FILE_SHARE;
+
   public function __construct(
     private readonly AzureBlobStorageService $blobStorage,
     private readonly AzureFileShareService $fileShare,
@@ -32,14 +41,15 @@ final class AzureStorageBackendResolver {
    * Returns the backend service for the configured storage kind.
    */
   public function get(): AzureStorageBackendInterface {
+    // Exhaustive: getBackendId() only ever returns a valid id.
     return match ($this->getBackendId()) {
+      self::BACKEND_BLOB => $this->blobStorage,
       self::BACKEND_FILE_SHARE => $this->fileShare,
-      default => $this->blobStorage,
     };
   }
 
   /**
-   * Returns the configured backend id, falling back to blob when unrecognised.
+   * Returns the configured backend id, or DEFAULT_BACKEND if unset or unrecognised.
    *
    * An unknown value is a misconfiguration rather than a fatal condition, so it
    * is logged and the default used — the alternative is a white screen on what
@@ -48,7 +58,7 @@ final class AzureStorageBackendResolver {
   public function getBackendId(): string {
     $configured = (string) (
       $this->configFactory->get('azure_storage_browser.settings')->get('storage_backend')
-      ?? self::BACKEND_BLOB
+      ?? self::DEFAULT_BACKEND
     );
 
     if (!in_array($configured, self::backendIds(), TRUE)) {
@@ -56,11 +66,11 @@ final class AzureStorageBackendResolver {
         'Unrecognised storage_backend %backend; falling back to %default. Valid values are: %valid.',
         [
           '%backend' => $configured,
-          '%default' => self::BACKEND_BLOB,
+          '%default' => self::DEFAULT_BACKEND,
           '%valid'   => implode(', ', self::backendIds()),
         ]
       );
-      return self::BACKEND_BLOB;
+      return self::DEFAULT_BACKEND;
     }
 
     return $configured;

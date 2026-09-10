@@ -1,7 +1,8 @@
-# Which Azure service this site browses: 'blob' (StorageV2 account) or
-# 'file_share' (FileStorage / Azure Files). An account is only ever one kind.
-# Override per environment in settings.php.
-storage_backend: 'blob'
+# Which Azure service this site browses: 'file_share' (Azure Files - works on
+# both FileStorage and StorageV2 accounts) or 'blob' (Blob Storage - StorageV2
+# accounts only). Defaults to file_share. Override per environment in
+# settings.php.
+storage_backend: 'file_share'
 azure_account_name: ''
 azure_account_key: ''
 azure_container_name: ''

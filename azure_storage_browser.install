@@ -11,15 +11,16 @@ declare(strict_types=1);
  * Adds storage_backend and the endpoint override settings.
  *
  * config/install only applies at install time, so sites that already have the
- * module need the new keys backfilled. Defaults to 'blob', which is what the
- * module did before the backend became selectable.
+ * module need the new keys backfilled. storage_backend gets the module default
+ * (see AzureStorageBackendResolver::DEFAULT_BACKEND), the same value a fresh
+ * install gets.
  */
 function azure_storage_browser_update_11001(): string {
   $config = \Drupal::configFactory()->getEditable('azure_storage_browser.settings');
   $added = [];
 
   foreach ([
-    'storage_backend' => 'blob',
+    'storage_backend' => \Drupal\azure_storage_browser\AzureStorageBackendResolver::DEFAULT_BACKEND,
     'azure_blob_endpoint' => '',
     'azure_file_endpoint' => '',
   ] as $key => $default) {

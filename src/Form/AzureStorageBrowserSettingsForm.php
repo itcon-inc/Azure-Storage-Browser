@@ -53,7 +53,7 @@ class AzureStorageBrowserSettingsForm extends ConfigFormBase {
         AzureStorageBackendResolver::BACKEND_BLOB => $this->t('Blob Storage (StorageV2 account)'),
         AzureStorageBackendResolver::BACKEND_FILE_SHARE => $this->t('Azure Files (FileStorage account)'),
       ],
-      '#default_value' => $config->get('storage_backend') ?: AzureStorageBackendResolver::BACKEND_BLOB,
+      '#default_value' => $config->get('storage_backend') ?: AzureStorageBackendResolver::DEFAULT_BACKEND,
       '#required' => TRUE,
     ];
 
